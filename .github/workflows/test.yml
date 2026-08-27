@@ -1,0 +1,35 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+        extras: ["all", "none"]
+    name: py${{ matrix.python-version }} extras=${{ matrix.extras }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install with all extras
+        if: matrix.extras == 'all'
+        run: uv sync --all-extras
+
+      - name: Install with no extras
+        if: matrix.extras == 'none'
+        run: uv sync --only-group dev
+
+      - name: Run tests
+        run: uv run pytest -q
