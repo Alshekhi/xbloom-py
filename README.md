@@ -43,11 +43,6 @@ package drops into an environment that already pins these without fighting it.
 `ble`, `ota` and `mode_listener` import their Bluetooth dependencies lazily, so
 they can be imported for packet construction with no extras installed.
 
-## Status
-
-`0.x` — the API is settling. `1.0.0` follows once a second consumer has proven
-the module boundaries.
-
 ## Development
 
 ```bash
