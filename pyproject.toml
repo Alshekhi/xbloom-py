@@ -1,6 +1,6 @@
 [project]
 name = "xbloom-py"
-version = "0.1.2"
+version = "0.1.3"
 description = "Async Python library for xBloom Studio coffee brewers: BLE protocol, recipes, OTA and cloud"
 readme = "README.md"
 license = "MIT"

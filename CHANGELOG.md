@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 2026-08-27
+
+Documentation only; identical to `0.1.2` as software. A release exists because a
+project description on PyPI is fixed at upload and can only be changed by
+publishing again.
+
 ## 0.1.2 — 2026-08-27
 
 First release.
