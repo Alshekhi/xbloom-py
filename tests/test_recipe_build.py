@@ -251,7 +251,7 @@ def test_build_snaps_a_temperature_above_boiling_point_and_reports_it() -> None:
     assert any("temp" in a.lower() for a in res.adjustments)
 
 
-# ── brewing defaults: Mansour's rules, not machine limits ───────────────────
+# ── brewing defaults: this library's choices, not machine limits ───────────
 def test_build_defaults_every_flow_rate_to_three() -> None:
     res = recipe_build.build(_minimal(pour_count=3))
     assert [p["flow_rate"] for p in res.recipe["pours"]] == [3.0, 3.0, 3.0]
