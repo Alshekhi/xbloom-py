@@ -39,7 +39,7 @@ import time
 from typing import Any, Awaitable, Callable, Coroutine
 
 from .ble import (
-    CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, _build_frame,
+    CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, CommandRefused, _build_frame,
     decode_notification, split_notification,
 )
 
@@ -50,6 +50,7 @@ IDLE_TIMEOUT_SEC = 300              # default: auto-stop after 5 min silence
                                     # (callers may override)
 SLOW_CONNECT_THRESHOLD_SEC = 1.0    # only announce "connecting…" beyond this
 INITIAL_STATE_TIMEOUT_SEC = 3.0     # how long to wait for RD_MachineInfo
+HOLD_TICK_S = 1.0                   # how often the held session checks its link
 
 NotificationFilter = Callable[[dict], "dict | None"]
 LifecycleCallback = Callable[[str, dict], None]
@@ -100,6 +101,10 @@ class XBloomModeListener:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client = None       # bleak.BleakClient | None
+        self._ble = None          # the XBloomBleClient holding the session
+        # Why the link was found gone, once it was — the hold loop ends the
+        # session on it rather than waiting out the idle timer.
+        self._link_lost: str | None = None
         self._task: asyncio.Task | None = None
         self._stop_evt = asyncio.Event()
         self._last_activity: float = 0.0
@@ -113,6 +118,7 @@ class XBloomModeListener:
         if self.is_running:
             return
         self._stop_evt.clear()
+        self._link_lost = None
         # Capture the running loop here (start() runs on the host loop). The
         # bleak notification callback fires from a worker thread and needs
         # this reference to hand coroutines back to the loop.
@@ -157,7 +163,31 @@ class XBloomModeListener:
             return True
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("[%s mode] send_live failed: %s", self.mode_name, err)
+            self._link_lost = str(err)
             return False
+
+    async def send_confirmed(self, name: str, frame: bytes) -> bool:
+        """Write a command over the *held* session and wait for its answer.
+
+        For a discrete action — a pour, a grind — rather than a knob being
+        dragged. The machine takes one connection at a time, so a host holding
+        a session must send such commands over it: opening a second link for
+        them tears the session down. Confirmation is the same as a one-shot
+        command's: True when accepted, False when no answer came, and
+        :class:`~xbloom.ble.CommandRefused` when the machine refused it. The
+        command is re-sent only while the machine is asleep, never while it is
+        awake — a re-send could repeat a pour it did start.
+        """
+        ble = self._ble
+        if ble is None:
+            raise RuntimeError(f"[{self.mode_name} mode] no session holds the link")
+        try:
+            return await ble.write_confirmed(name, frame, retry_only_when_sleeping=True)
+        except CommandRefused:
+            raise
+        except Exception as err:  # noqa: BLE001
+            self._link_lost = str(err)
+            raise
 
     # ---- Subclass hooks ------------------------------------------------ #
     async def _read_initial_state(self) -> dict:
@@ -266,7 +296,21 @@ class XBloomModeListener:
                 # notifications keep flowing. Auto-stop after the
                 # configured idle window (D-33).
                 while not self._stop_evt.is_set():
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(HOLD_TICK_S)
+                    if self._link_lost is None and not getattr(
+                        self._client, "is_connected", True,
+                    ):
+                        self._link_lost = "disconnected"
+                    if self._link_lost is not None:
+                        # Another connection took the machine, or it went out
+                        # of range. Looking alive until the idle timer would
+                        # leave the host showing a screen nobody is on.
+                        _LOGGER.warning(
+                            "[%s mode] link lost (%s) — ending the session",
+                            self.mode_name, self._link_lost,
+                        )
+                        self._on_lifecycle("failed", {"reason": "connection_lost"})
+                        break
                     idle = time.monotonic() - self._last_activity
                     if idle > self._idle_timeout_s:
                         _LOGGER.info(
@@ -298,6 +342,10 @@ class XBloomModeListener:
             self._on_frame(frame)
 
     def _on_frame(self, frame: bytes) -> None:
+        ble = self._ble
+        if ble is not None:
+            # Lets send_confirmed hear the answer to what it wrote.
+            ble.note_reply(frame)
         try:
             decoded = decode_notification(frame)
         except Exception:  # noqa: BLE001

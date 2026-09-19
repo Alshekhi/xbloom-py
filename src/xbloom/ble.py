@@ -1109,17 +1109,19 @@ class XBloomBleClient:
         for frame in split_notification(raw):
             self._on_frame(frame)
 
-    def _on_frame(self, frame: bytes) -> None:
-        """Handle one 5802 frame from a notification."""
-        decoded = decode_notification(frame)
-        if decoded is None:
-            return
-        cmd = decoded["cmd"]
-        log.debug("BLE notify cmd=%d (%s)", cmd, decoded)
+    def note_reply(self, frame: bytes) -> None:
+        """Let this client's reply tracking see one received frame.
 
-        # Send-and-confirm: if this notification answers a command code we're
-        # waiting on, release the waiter with whatever refusal it carries. bleak
-        # may call us from a worker thread, so hop to the connect-time loop.
+        Called for every frame this client decodes itself, and by a holder that
+        subscribed to FFE2 with its own callback (the mode listener), so that
+        ``write_confirmed`` works over the connection it holds.
+        """
+        cmd = frame_command_code(frame)
+        if cmd is None:
+            return
+        # Send-and-confirm: if this frame answers a command code we're waiting
+        # on, release the waiter with whatever refusal it carries. bleak may
+        # call us from a worker thread, so hop to the connect-time loop.
         waiter = self._echo_waiters.get(cmd)
         if waiter is not None and self._loop is not None:
             self._loop.call_soon_threadsafe(waiter.answer, reply_refusal(frame))
@@ -1129,6 +1131,15 @@ class XBloomBleClient:
             self._sleeping = True
         elif cmd == NOTIFY_AWAKE:
             self._sleeping = False
+
+    def _on_frame(self, frame: bytes) -> None:
+        """Handle one 5802 frame from a notification."""
+        decoded = decode_notification(frame)
+        if decoded is None:
+            return
+        cmd = decoded["cmd"]
+        log.debug("BLE notify cmd=%d (%s)", cmd, decoded)
+        self.note_reply(frame)
 
         # Resolve a pending status-snapshot request on the next heartbeat.
         if cmd == NOTIFY_MACHINE_INFO and self._loop is not None:
