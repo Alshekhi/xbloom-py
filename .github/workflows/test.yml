@@ -33,3 +33,41 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+  no-personal-data:
+    name: describes the library, not its users
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fail if a file or a new commit message names a user or a private setup
+        # This repository is public. Comments that explain a behaviour by who
+        # uses the library, anything naming the maintainer's own machine,
+        # account or network, and explanations written in terms of a private
+        # setup rather than the package, have reached public history before —
+        # and a published commit stays reachable by its id even after a
+        # force-push. Every sentence here can be written about what the code
+        # does, or what the change does, instead. LICENSE and the package
+        # authors field are deliberate credits and are exempt.
+        run: |
+          set -u
+          PAT='voiceover|screen.reader|blind (user|person)|/Users/|[0-9A-F]{2}:79:C4:[0-9A-F]{2}|59A022|J15A01G'
+          PAT="$PAT"'|personal|my (machine|setup|install|own|house)|local tooling|\bindexer\b|household|mansour'
+          fail=0
+          if git grep -n -i -E "$PAT" -- . ':!LICENSE' ':!pyproject.toml' ':!.github/workflows/test.yml'; then
+            echo "::error::A tracked file describes a user or a private setup. Say what the code does instead."
+            fail=1
+          fi
+          range=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          if [ -n "$range" ] && git log --format='%h %s%n%b' "$range" | grep -n -i -E "$PAT"; then
+            echo "::error::A commit message in this push names a user or a private setup. Reword it before it is published."
+            fail=1
+          fi
+          [ "$fail" = 0 ] || exit 1
+          echo "Nothing here describes anyone."

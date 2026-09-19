@@ -7,6 +7,6 @@ build/
 *.egg-info/
 .DS_Store
 
-# Personal reference — specs, plans and release notes stay local
+# Reference material kept outside the repo — specs, plans and release notes
 docs/
 CLAUDE.md
