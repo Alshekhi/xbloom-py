@@ -1013,7 +1013,12 @@ class XBloomBleClient:
             self._device = None
         else:
             self._device = device_or_name
-            self._name = getattr(device_or_name, "name", None) or "<BLEDevice>"
+            # A device found by address can come without its name yet.
+            self._name = (
+                getattr(device_or_name, "name", None)
+                or getattr(device_or_name, "address", None)
+                or "<BLEDevice>"
+            )
         self._timeout = timeout
         self._on_event = on_event
         self._client = None  # bleak.BleakClient set on connect

@@ -24,6 +24,8 @@ Fixes lost frames, and brews that went ahead after the machine refused a step.
 - `read_status_snapshot()` sends its wake-up handshake confirmed and re-sent,
   like any command. A machine asleep can miss the first frame, and the single
   unconfirmed nudge then left a status refresh with nothing to read.
+- A client given a Bluetooth device without a name — one a host found by
+  address — names it by its address in the logs, not `<BLEDevice>`.
 - `spec.FIELDS["brewer_volume_ml"]` is the standalone brewer's range, 30-500 ml,
   from the official app's brewer screen. `build_brewer_standalone_frame` refuses
   a volume outside it: the pour stops when the flow meter reaches the target,

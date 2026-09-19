@@ -125,3 +125,14 @@ def test_an_echo_behind_other_frames_releases_its_waiter():
         await asyncio.wait_for(waiter.event.wait(), timeout=0.1)
         assert waiter.refusal is None
     asyncio.run(go())
+
+
+def test_a_device_found_by_address_is_logged_by_its_address():
+    # A host that finds the machine by address before its name is known hands
+    # over a BLEDevice with no name; "<BLEDevice>" said nothing about which.
+    from types import SimpleNamespace
+
+    from xbloom import ble
+
+    device = SimpleNamespace(name=None, address="AA:BB:CC:00:00:01")
+    assert ble.XBloomBleClient(device)._name == "AA:BB:CC:00:00:01"
