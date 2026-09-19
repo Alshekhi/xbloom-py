@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable, Coroutine
 
 from .ble import (
     CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, _build_frame,
-    decode_notification,
+    decode_notification, split_notification,
 )
 
 _LOGGER = logging.getLogger("xbloom.mode_listener")
@@ -293,8 +293,13 @@ class XBloomModeListener:
     # inside _run's `async with XBloomBleClient` block (see above).
 
     def _on_notify(self, _char, data: bytes) -> None:
+        # One notification can carry several frames; each is handled in order.
+        for frame in split_notification(bytes(data)):
+            self._on_frame(frame)
+
+    def _on_frame(self, frame: bytes) -> None:
         try:
-            decoded = decode_notification(bytes(data))
+            decoded = decode_notification(frame)
         except Exception:  # noqa: BLE001
             return
         if decoded is None:

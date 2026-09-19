@@ -761,6 +761,38 @@ def parse_ffe3_packet(data: bytes) -> dict | None:
     return {"code": code, "data_bytes": data_bytes, "data_float": data_float}
 
 
+def split_notification(data: bytes) -> list[bytes]:
+    """Split one FFE2 notification into the 5802 frames packed inside it.
+
+    Under load the machine coalesces frames: one notification can carry a
+    weight reading, a water reading, a command echo and a brew event back to
+    back, and whatever sits behind the first frame is lost unless it is walked.
+    Each frame declares its own total length at bytes 5-8 (LE uint32).
+
+    A notification whose first frame cannot be walked by that length is
+    returned whole, so it decodes exactly as a lone frame always has. A
+    trailing frame cut short by the notification's size limit is dropped — the
+    next notification starts on a fresh frame, never on its remainder.
+    """
+    frames: list[bytes] = []
+    i = 0
+    while i < len(data):
+        rest = data[i:]
+        length = (
+            struct.unpack_from("<I", rest, 5)[0]
+            if len(rest) >= 9 and rest[0] == 0x58 and rest[1] == 0x02
+            else 0
+        )
+        if length < 12 or length > len(rest):
+            if not frames:
+                return [data]
+            log.debug("dropping %d trailing bytes that are not a whole frame", len(rest))
+            break
+        frames.append(rest[:length])
+        i += length
+    return frames
+
+
 def _ascii_field(payload: bytes, start: int, end: int) -> str | None:
     """Decode a fixed-width ASCII field from a payload, fail-safe.
 
@@ -1006,15 +1038,24 @@ class XBloomBleClient:
         return bool(self._client is not None and self._client.is_connected)
 
     def _on_notify(self, _characteristic: object, data: bytes) -> None:
-        """Synchronous BLE notification handler — dispatched by bleak."""
-        decoded = decode_notification(bytes(data))
+        """Synchronous BLE notification handler — dispatched by bleak.
+
+        One notification can carry several frames; each is handled in order.
+        """
+        # Raw notification hex — lets us characterise reply/NACK layouts after
+        # the fact (e.g. the status/error byte a rejected recipe carries).
+        # Zero-risk: log only. bleak hands us a bytearray; hex() it verbatim.
+        raw = bytes(data)
+        log.debug("BLE raw notify frame: %s", raw.hex())
+        for frame in split_notification(raw):
+            self._on_frame(frame)
+
+    def _on_frame(self, frame: bytes) -> None:
+        """Handle one 5802 frame from a notification."""
+        decoded = decode_notification(frame)
         if decoded is None:
             return
         cmd = decoded["cmd"]
-        # Raw frame hex — lets us characterise reply/NACK layouts after the fact
-        # (e.g. the status/error byte a rejected recipe carries). Zero-risk: log
-        # only. bleak hands us a bytearray; hex() it verbatim.
-        log.debug("BLE raw notify frame: %s", bytes(data).hex())
         log.debug("BLE notify cmd=%d (%s)", cmd, decoded)
 
         # Send-and-confirm: if this notification echoes a command code we're
