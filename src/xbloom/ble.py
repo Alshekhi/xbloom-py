@@ -1353,11 +1353,13 @@ class XBloomBleClient:
             return None  # no echo/notify stream — can't observe the heartbeat
         self._snapshot_future = self._loop.create_future()
         try:
-            # Kick the machine so it emits the heartbeat promptly (plain write —
-            # we don't need to confirm the handshake echo for a status read).
+            # Kick the machine so it emits the heartbeat promptly. Confirmed and
+            # re-sent like any command: a machine asleep can miss the first
+            # frame, and a single unconfirmed nudge then left the refresh with
+            # nothing at all to read.
             try:
                 hs = _build_frame(CMD_HANDSHAKE, list(HANDSHAKE_DATA))
-                await self._client.write_gatt_char(FFE1_UUID, hs, response=False)
+                await self.write_confirmed("handshake", hs)
             except Exception as err:  # noqa: BLE001
                 log.debug("snapshot handshake nudge failed: %s", err)
             try:

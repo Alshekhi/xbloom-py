@@ -309,6 +309,34 @@ def test_read_status_snapshot_returns_heartbeat():
     asyncio.run(go())
 
 
+def test_read_status_snapshot_resends_the_nudge_a_sleeping_machine_missed():
+    # A machine asleep can miss the first frame. The nudge was a single plain
+    # write, so a refresh reached a dozing machine and heard nothing at all.
+    async def go():
+        fake = FakeClient()
+        c = _mk_client(fake)
+        fake.notify_cb = c._on_notify
+        handshakes = []
+        orig = fake.write_gatt_char
+
+        async def missed_once(uuid, frame, response=False):
+            if ble.frame_command_code(frame) == ble.CMD_HANDSHAKE:
+                handshakes.append(frame)
+                if len(handshakes) == 1:
+                    return            # asleep: the first one is lost
+                await orig(uuid, frame, response=response)
+                fake.loop.call_soon(lambda: fake.notify_cb(None, _machine_info_frame()))
+                return
+            await orig(uuid, frame, response=response)
+        fake.write_gatt_char = missed_once
+
+        with patch.object(ble, "ECHO_TIMEOUT_S", 0.05):
+            snap = await c.read_status_snapshot(timeout=1.0)
+        assert len(handshakes) == 2
+        assert snap is not None and snap["cmd"] == 40521
+    asyncio.run(go())
+
+
 def test_read_status_snapshot_times_out_without_heartbeat():
     async def go():
         fake = FakeClient(echo_codes=set())   # never delivers anything

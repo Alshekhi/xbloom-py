@@ -21,6 +21,9 @@ Fixes lost frames, and brews that went ahead after the machine refused a step.
   `CommandUnanswered` for a step that gets no reply, or when replies cannot be
   read at all, rather than falling back to fixed delays. `execute` is only sent
   once the recipe is accepted.
+- `read_status_snapshot()` sends its wake-up handshake confirmed and re-sent,
+  like any command. A machine asleep can miss the first frame, and the single
+  unconfirmed nudge then left a status refresh with nothing to read.
 - `spec.FIELDS["brewer_volume_ml"]` is the standalone brewer's range, 30-500 ml,
   from the official app's brewer screen. `build_brewer_standalone_frame` refuses
   a volume outside it: the pour stops when the flow meter reaches the target,
