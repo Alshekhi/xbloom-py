@@ -280,7 +280,7 @@ CMD_RECIPE_GRIND    = 8001   # 0x1F41 — recipe blob WHEN grinder is enabled
 CMD_RECIPE_NO_GRIND = 8004   # 0x1F44 — recipe blob WHEN grinder is disabled
 CMD_EXECUTE         = 8002   # 0x1F42 — start brew (no data)
 CMD_HANDSHAKE       = 8100   # 0x1FA4 — initial handshake / MTU
-CMD_BREWER_START    = 4506   # 0x11AA — standalone brewer start
+CMD_BREWER_START    = 4506   # 0x119A — standalone brewer start
 
 
 def cup_type_range(cup_type: int) -> tuple[float, float]:
@@ -311,7 +311,18 @@ def build_brewer_standalone_frame(
 
     Returns:
         Complete BLE frame bytes (header + payload + CRC16) for FFE1.
+
+    Raises:
+        ValueError: ``volume_ml`` is outside ``spec.FIELDS["brewer_volume_ml"]``.
+            The pour ends when the flow meter reaches the target, so a target
+            of zero gives it nothing to stop at.
     """
+    volume_range = spec.FIELDS["brewer_volume_ml"]
+    if not volume_range.min <= volume_ml <= volume_range.max:
+        raise ValueError(
+            f"brewer volume {volume_ml} ml is outside "
+            f"{volume_range.min:g}-{volume_range.max:g} ml"
+        )
     params = [
         _float_to_int_bits(flow_rate_mls * 10),
         _float_to_int_bits(volume_ml * 10),

@@ -144,6 +144,9 @@ FIELDS: dict[str, NumRange] = {
     "pour_pause_s": NumRange(0, 59, 1, 0, "s"),
     "bypass_volume_ml": NumRange(5, 100, 1, 30, "ml"),
     "bypass_temp_c": NumRange(20, 98, 1, 92, "°C"),
+    # Standalone brewer (4506): the app's brewer-screen slider. The pour stops
+    # when the flow meter reaches this volume, so it must never be zero.
+    "brewer_volume_ml": NumRange(30, 500, 1, 125, "ml"),
 }
 
 # Temperature sentinels, from the xBloom app's TemperatureConstant. A pour whose
