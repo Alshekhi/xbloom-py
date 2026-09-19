@@ -1,8 +1,13 @@
 # Changelog
 
-## 0.2.1 — 2026-09-19
+## 0.3.0 — 2026-09-19
 
 Fixes lost frames, and brews that went ahead after the machine refused a step.
+
+**Changed behaviour:** `brew()` and `write_confirmed()` now raise
+`CommandRefused` when the machine refuses a step, and `brew()` raises
+`CommandUnanswered` when a step gets no reply. Both used to carry on. Code that
+calls them should catch these and report the brew as not started.
 
 - Under load one FFE2 notification can carry a weight reading, a water reading,
   a command echo and a brew event back to back. Only the first frame was
