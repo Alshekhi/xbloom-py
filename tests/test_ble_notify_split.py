@@ -119,8 +119,9 @@ def test_every_packed_frame_reaches_the_host_in_order():
 def test_an_echo_behind_other_frames_releases_its_waiter():
     async def go():
         c = _client_on_running_loop([])
-        waiter = asyncio.Event()
+        waiter = ble._Reply()
         c._echo_waiters[8002] = waiter
         c._on_notify(None, PACKED_GRIND_START_TRUNCATED)
-        await asyncio.wait_for(waiter.wait(), timeout=0.1)
+        await asyncio.wait_for(waiter.event.wait(), timeout=0.1)
+        assert waiter.refusal is None
     asyncio.run(go())

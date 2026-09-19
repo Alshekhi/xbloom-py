@@ -15,6 +15,7 @@ import asyncio
 import struct
 from unittest.mock import patch
 
+import pytest
 
 from xbloom import ble
 
@@ -29,16 +30,31 @@ def _echo_frame(code: int) -> bytes:
     )
 
 
+def _refusal_frame(code: int, error: int) -> bytes:
+    """A refusal reply as the machine sends it: the command's own code, with a
+    16-byte payload whose bytes 12-14 carry the error code (byte 15 is the
+    screen state). Shaped on a real busy refusal of a re-sent 8002."""
+    payload = bytes(12) + error.to_bytes(3, "big") + bytes([0x1E])
+    return (
+        bytes([0x58, 0x02, 0x07])
+        + struct.pack("<H", code)
+        + struct.pack("<I", 10 + len(payload) + 2)
+        + bytes([0xC1]) + payload + bytes([0, 0])
+    )
+
+
 class FakeClient:
     """Records FFE1 writes; echoes chosen codes back via the notify callback.
 
     `echo_codes=None` echoes every command; a set echoes only those codes;
-    an empty set echoes nothing (dead-stream / sleeping machine).
+    an empty set echoes nothing (dead-stream / sleeping machine). `refuse`
+    maps a command code to the error code its reply carries instead.
     """
 
-    def __init__(self, echo_codes=None, notify_fails=False):
+    def __init__(self, echo_codes=None, notify_fails=False, refuse=None):
         self.is_connected = True
         self.echo_codes = echo_codes
+        self.refuse = refuse or {}
         self.notify_fails = notify_fails
         self.notify_cb = None
         self.loop = None
@@ -60,7 +76,10 @@ class FakeClient:
     def _deliver(self, code: int):
         self.events.append(("E", code))
         if self.notify_cb is not None:
-            self.notify_cb(None, _echo_frame(code))
+            if code in self.refuse:
+                self.notify_cb(None, _refusal_frame(code, self.refuse[code]))
+            else:
+                self.notify_cb(None, _echo_frame(code))
 
     @property
     def writes(self):
@@ -323,24 +342,114 @@ def test_brew_gates_execute_on_recipe_echo():
     asyncio.run(go())
 
 
-def test_brew_degrades_to_fixed_delay_when_no_handshake_echo():
+def test_brew_stops_when_a_step_is_never_answered():
+    # A step with no reply may or may not have been taken; executing on top of
+    # it is how a recipe that never committed was ground at a stale size.
     async def go():
-        fake = FakeClient(echo_codes=set())   # dead echo stream
+        fake = FakeClient(echo_codes={8100, 8102, 8104})   # 8001 never answered
         c = _mk_client(fake)
-        # Make the timeout tiny and the degraded fixed sleeps a no-op so the
-        # test is fast; the handshake canary must trip and the rest still send.
-        real_sleep = asyncio.sleep
+        with patch.object(ble, "SETTLE_AFTER_ECHO_S", 0), \
+             patch.object(ble, "ECHO_TIMEOUT_S", 0.01):
+            with pytest.raises(ble.CommandUnanswered) as err:
+                await c.brew(_RECIPE)
+        assert err.value.step == "recipe"
+        assert err.value.reason == "no_reply"
+        assert 8002 not in fake.writes
+    asyncio.run(go())
 
-        async def fast_sleep(_s):
-            await real_sleep(0)
-        with patch.object(ble, "ECHO_TIMEOUT_S", 0.01), \
-             patch("asyncio.sleep", fast_sleep):
+
+def test_brew_refuses_to_start_when_replies_cannot_be_read():
+    async def go():
+        fake = FakeClient(notify_fails=True)   # BlueZ refuses the subscription
+        c = _mk_client(fake)
+        with pytest.raises(ble.CommandUnanswered):
             await c.brew(_RECIPE)
-        # Handshake retried up to max, then every remaining frame sent once
-        # (degraded). So handshake appears ECHO_MAX_ATTEMPTS times, the rest once.
-        assert fake.writes[:ble.ECHO_MAX_ATTEMPTS] == [8100] * ble.ECHO_MAX_ATTEMPTS
-        tail = fake.writes[ble.ECHO_MAX_ATTEMPTS:]
-        assert tail == [8102, 8104, 8001, 8002]
+        assert fake.writes == []
+    asyncio.run(go())
+
+
+def test_brew_stops_on_a_refused_recipe():
+    async def go():
+        fake = FakeClient(refuse={8001: 0x400000})   # the consistency gate
+        c = _mk_client(fake)
+        with patch.object(ble, "SETTLE_AFTER_ECHO_S", 0):
+            with pytest.raises(ble.CommandRefused) as err:
+                await c.brew(_RECIPE)
+        assert err.value.step == "recipe"
+        assert err.value.reason == "recipe_rejected"
+        assert fake.writes == [8100, 8102, 8104, 8001]   # refused: not re-sent
+    asyncio.run(go())
+
+
+def test_brew_stops_when_the_machine_is_not_ready():
+    # After a power cut the machine refuses the first command it is sent.
+    async def go():
+        fake = FakeClient(refuse={8102: 0x100000})
+        c = _mk_client(fake)
+        with patch.object(ble, "SETTLE_AFTER_ECHO_S", 0):
+            with pytest.raises(ble.CommandRefused) as err:
+                await c.brew(_RECIPE)
+        assert (err.value.step, err.value.reason) == ("bypass+dose", "machine_busy")
+        assert 8001 not in fake.writes and 8002 not in fake.writes
+    asyncio.run(go())
+
+
+# --------------------------------------------------------------------------- #
+# Refusals                                                                    #
+# --------------------------------------------------------------------------- #
+def test_a_plain_echo_is_an_acceptance():
+    assert ble.reply_refusal(_echo_frame(8001)) is None
+
+
+def test_a_real_busy_refusal_is_read():
+    # Received after a re-sent 8002, while the first one's brew was running.
+    frame = bytes.fromhex("580207421f1c000000c10000000000000000000000008000001e949a")
+    assert ble.reply_refusal(frame) == "machine_busy"
+
+
+def test_codes_the_app_does_not_treat_as_refusals_are_acceptances():
+    # AppBleManager.processErrorMsg ignores every value outside its list.
+    assert ble.reply_refusal(_refusal_frame(8001, 0x000001)) is None
+    assert ble.reply_refusal(_refusal_frame(8001, 0)) is None
+
+
+def test_write_confirmed_raises_on_a_refusal_without_re_sending():
+    async def go():
+        fake = FakeClient(refuse={8500: 0x000800})
+        c = _mk_client(fake)
+        c._notify_active = True
+        fake.notify_cb = c._on_notify
+        with pytest.raises(ble.CommandRefused) as err:
+            await c.write_confirmed("tare", ble._build_frame(ble.CMD_TARE), timeout=0.5)
+        assert err.value.reason == "not_on_home_screen"
+        assert fake.writes == [8500]
+    asyncio.run(go())
+
+
+def test_a_busy_refusal_of_a_re_send_means_an_earlier_send_was_taken():
+    # The machine refuses a duplicate because it is already doing the first.
+    # Every brew whose 8002 was re-sent shows one acceptance and one busy
+    # refusal per duplicate.
+    async def go():
+        fake = FakeClient(echo_codes=set(), refuse={8002: 0x800000})
+        c = _mk_client(fake)
+        c._notify_active = True
+        fake.notify_cb = c._on_notify
+        state = {"n": 0}
+        orig = fake.write_gatt_char
+
+        async def refuse_the_re_send(uuid, frame, response=False):
+            state["n"] += 1
+            await orig(uuid, frame, response=response)
+            if state["n"] == 2:
+                fake.loop.call_soon(fake._deliver, ble.frame_command_code(frame))
+        fake.write_gatt_char = refuse_the_re_send
+
+        ok = await c.write_confirmed(
+            "execute", ble._build_frame(ble.CMD_EXECUTE), timeout=0.05, max_attempts=3,
+        )
+        assert ok is True
+        assert fake.writes == [8002, 8002]
     asyncio.run(go())
 
 

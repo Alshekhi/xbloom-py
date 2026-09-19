@@ -728,6 +728,54 @@ def frame_command_code(frame: bytes) -> int | None:
     return frame[3] | (frame[4] << 8)
 
 
+def reply_refusal(frame: bytes) -> str | None:
+    """The refusal a command reply carries, or None when it is an acceptance.
+
+    A refused command is answered with its own code, exactly like an accepted
+    one, so the code alone proves nothing. A refusal has a 16-byte payload
+    whose bytes 12-14 hold the error code — where the app reads it — and only
+    the codes in ``spec.REPLY_REFUSALS`` count.
+    """
+    payload = frame[10:-2]
+    if len(payload) < 16:
+        return None
+    return spec.REPLY_REFUSALS.get(int.from_bytes(payload[12:15], "big"))
+
+
+class CommandRefused(Exception):
+    """The machine answered a command with a refusal."""
+
+    def __init__(self, step: str, reason: str) -> None:
+        super().__init__(f"the machine refused '{step}': {reason}")
+        self.step = step
+        self.reason = reason
+
+
+class CommandUnanswered(Exception):
+    """A brew step got no reply, so whether the machine took it is unknown."""
+
+    reason = "no_reply"
+
+    def __init__(self, step: str, detail: str = "no reply from the machine") -> None:
+        super().__init__(f"'{step}': {detail}")
+        self.step = step
+
+
+class _Reply:
+    """The first answer to a command: an acceptance, or the refusal it carried."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self.event = asyncio.Event()
+        self.refusal: str | None = None
+
+    def answer(self, refusal: str | None) -> None:
+        if not self.event.is_set():
+            self.refusal = refusal
+            self.event.set()
+
+
 # Pattern-byte mapping. The machine reports the pour pattern on cmd 8107 as a
 # raw 0/1/2 code; the byte -> name order (centered/circular/spiral) lives in
 # spec.py, confirmed live via the voice-box announcements.
@@ -964,10 +1012,10 @@ class XBloomBleClient:
         # Send-and-confirm state. `_notify_active` is set True in brew() once
         # FFE2 start_notify succeeds; without it there is no echo stream and the
         # layer degrades to fixed delays. `_echo_waiters` maps an awaited command
-        # code → the Event set when its echo arrives on FFE2. `_sleeping` tracks
+        # code → the _Reply its first answer on FFE2 resolves. `_sleeping` tracks
         # RD_MachineSleeping/NotSleeping for the retry decision.
         self._notify_active = False
-        self._echo_waiters: dict[int, "asyncio.Event"] = {}
+        self._echo_waiters: dict[int, _Reply] = {}
         self._sleeping = False
         # Resolved by _on_notify with the next RD_MachineInfo heartbeat, so
         # read_status_snapshot() can await a fresh status frame.
@@ -1058,12 +1106,12 @@ class XBloomBleClient:
         cmd = decoded["cmd"]
         log.debug("BLE notify cmd=%d (%s)", cmd, decoded)
 
-        # Send-and-confirm: if this notification echoes a command code we're
-        # waiting on, release the waiter. bleak may call us from a worker
-        # thread, so hop to the connect-time loop to touch the asyncio.Event.
+        # Send-and-confirm: if this notification answers a command code we're
+        # waiting on, release the waiter with whatever refusal it carries. bleak
+        # may call us from a worker thread, so hop to the connect-time loop.
         waiter = self._echo_waiters.get(cmd)
         if waiter is not None and self._loop is not None:
-            self._loop.call_soon_threadsafe(waiter.set)
+            self._loop.call_soon_threadsafe(waiter.answer, reply_refusal(frame))
 
         # Track sleep state for the retry decision (mirrors AppDeviceManager).
         if cmd == NOTIFY_SLEEPING:
@@ -1102,11 +1150,18 @@ class XBloomBleClient:
     ) -> bool:
         """Write one FFE1 frame and wait for the machine's echo on FFE2.
 
-        Mirrors the app's AppBleManager: the machine echoes the command code
-        back (`58 02 07 <code> …`); we send, then await that echo for up to
-        ``timeout`` seconds, re-sending on timeout up to ``max_attempts`` total
-        writes. Returns True if the echo arrived (command confirmed accepted),
-        False if it never did after all attempts (caller proceeds anyway).
+        Mirrors the app's AppBleManager: the machine answers the command with
+        its own code (`58 02 07 <code> …`); we send, then await that answer for
+        up to ``timeout`` seconds, re-sending on timeout up to ``max_attempts``
+        total writes. Returns True if the command was accepted, False if no
+        answer ever came — the caller decides what an unconfirmed command means.
+
+        Raises :class:`CommandRefused` when the answer is a refusal (see
+        :func:`reply_refusal`) — a refused command is not re-sent. The one
+        exception is a ``machine_busy`` refusal answering a *re-send*: the
+        machine refuses a duplicate because it is already doing the first, so
+        an earlier send was taken. Every brew whose 8002 was re-sent shows
+        exactly one acceptance plus one busy refusal per duplicate.
 
         Requires ``self._notify_active`` — the caller must have subscribed to
         FFE2 and must degrade to a plain write + fixed delay when notifications
@@ -1133,21 +1188,34 @@ class XBloomBleClient:
             await self._client.write_gatt_char(FFE1_UUID, frame, response=False)
             return False
 
-        event = asyncio.Event()
-        # Register the waiter BEFORE writing so an echo can't race ahead of us.
-        self._echo_waiters[code] = event
+        reply = _Reply()
+        # Register the waiter BEFORE writing so an answer can't race ahead of
+        # us. It is kept across re-sends: a late answer to an earlier send is
+        # still the machine's answer to this command.
+        self._echo_waiters[code] = reply
         try:
             for attempt in range(1, max_attempts + 1):
-                event.clear()
                 log.info(
                     "BLE write '%s' (%d bytes, attempt %d/%d): %s",
                     name, len(frame), attempt, max_attempts, frame.hex(),
                 )
                 await self._client.write_gatt_char(FFE1_UUID, frame, response=False)
                 try:
-                    await asyncio.wait_for(event.wait(), timeout=timeout)
-                    log.debug("BLE '%s' (code %d) echo confirmed", name, code)
-                    return True
+                    await asyncio.wait_for(reply.event.wait(), timeout=timeout)
+                    if reply.refusal is None:
+                        log.debug("BLE '%s' (code %d) echo confirmed", name, code)
+                        return True
+                    if reply.refusal == "machine_busy" and attempt > 1:
+                        log.info(
+                            "BLE '%s' (code %d): re-send refused as busy — an "
+                            "earlier send was taken", name, code,
+                        )
+                        return True
+                    log.warning(
+                        "BLE '%s' (code %d) refused by the machine: %s",
+                        name, code, reply.refusal,
+                    )
+                    raise CommandRefused(name, reply.refusal)
                 except asyncio.TimeoutError:
                     can_retry = attempt < max_attempts and (
                         self._sleeping or not retry_only_when_sleeping
@@ -1161,8 +1229,7 @@ class XBloomBleClient:
                         self._sleeping,
                     )
             log.warning(
-                "BLE '%s' (code %d): no echo after %d attempt(s) (sleeping=%s) — "
-                "proceeding without confirmation",
+                "BLE '%s' (code %d): no echo after %d attempt(s) (sleeping=%s)",
                 name, code, attempt, self._sleeping,
             )
             return False
@@ -1284,13 +1351,18 @@ class XBloomBleClient:
             self._snapshot_future = None
 
     async def brew(self, recipe: dict) -> None:
-        """Send the 6-frame brew sequence to FFE1 (handshake, back-to-home,
-        bypass+dose, set-cup, recipe, execute).
+        """Send the brew sequence to FFE1 (handshake, bypass+dose, set-cup,
+        recipe, execute), each step only once the machine accepted the last.
 
-        Subscribes to FFE2 + FFE3 notifications first, so any decoded events
-        arriving before the brew finishes are delivered to `on_event`. Returns
-        immediately after the frames are written — call `wait_for_completion`
-        to block until `RD_ENJOY` arrives.
+        Subscribes to FFE2 notifications first, so any decoded events arriving
+        before the brew finishes are delivered to `on_event`. Returns once
+        EXECUTE is accepted — call `wait_for_completion` to block until
+        `RD_ENJOY` arrives.
+
+        Raises :class:`CommandRefused` when the machine refuses a step, and
+        :class:`CommandUnanswered` when a step gets no reply or replies cannot
+        be read at all. Either way EXECUTE is never sent: executing on top of a
+        recipe the machine did not take grinds at whatever size it last held.
         """
         import asyncio
 
@@ -1301,91 +1373,40 @@ class XBloomBleClient:
         self._loop = asyncio.get_running_loop()
 
         # All notifications (scale, water, machine info, brew progress events)
-        # AND command echoes arrive on FFE2. Subscribing is BEST-EFFORT: if
-        # BlueZ refuses (we frequently see `[org.bluez.Error.NotPermitted]
-        # Notify acquired` when other Bluetooth consumers on the host hold the
-        # same notify handle), _ensure_notify logs a warning and leaves
-        # _notify_active False — the send loop below then degrades to fixed
-        # delays. The brew frames (sent on FFE1) work regardless; we just lose
-        # echo confirmation and live entity updates for the run.
+        # AND command replies arrive on FFE2. BlueZ can refuse the subscription
+        # (`[org.bluez.Error.NotPermitted] Notify acquired` when another
+        # Bluetooth consumer on the host holds the handle); with no replies to
+        # read, no step can be confirmed, so the brew does not start.
         self._notify_active = False
         await self._ensure_notify()
+        if not self._notify_active:
+            raise CommandUnanswered(
+                "subscribe", "the machine's replies cannot be read, so no step can be confirmed",
+            )
 
-        # Build and send the 5-frame brew sequence to FFE1. The machine's
-        # FFE1 characteristic only supports Write Without Response — using
-        # response=True triggers ATT error 0x0e ("Unlikely Error"). A small
-        # inter-frame delay matches the official Android app's pacing and
-        # gives the machine time to process each command before the next.
-        # We verify is_connected after the burst so silent drops surface.
-        frames = build_brew_frames(recipe)
         # App-faithful sequence (2026-07-22). The official app's recipe brew is
         # only: bypass+dose(8102) → set-cup(8104) → recipe(8001/8004) →
-        # execute(8002). It does NOT switch mode. We used to force Auto/Easy mode
-        # (11511) here believing "8001 only grinds in Auto" — that was WRONG: the
-        # firmware's 11511 handler only stores a mode flag and never touches the
-        # grind path or the activity-state gate; grinding is selected by
-        # 8001-vs-8004 and by the machine being idle/ready (true on Home), not by
-        # Auto/Pro. So we no longer flip the user's mode. (The handshake 8100 is
-        # kept — it's our connection kickstart + ACK-gating canary, not a brew
-        # behaviour. The real 2026-07-16 grind-skip was fixed by ACK-gating, not
-        # by the mode switch that rode along with it.)
+        # execute(8002). It does NOT switch mode (11511 only stores a mode flag
+        # and never touches the grind path; grinding is selected by
+        # 8001-vs-8004). The handshake 8100 is kept as the connection
+        # kickstart; it is the first frame, and a just-woken machine often
+        # needs it re-sent.
         #
-        # Grind SIZE rides INSIDE the 8001 recipe blob — we do NOT inject a
-        # separate 8006 (APP_GRINDER_IN). App + firmware RE (2026-07-22): the
-        # stock recipe brew never sends 8006; the 8002 EXECUTE handler itself
-        # positions the burrs to the committed grind and grinds+brews
-        # autonomously (no knob press). An injected 8006 writes the grind
-        # registers AND bumps the work-state out-of-band, leaving the recipe
-        # commit inconsistent → the machine rejects with an abnormal-gear error
-        # (seen live at both grind 1 and 50). The recipe's size is applied by the
-        # 8001 validation committing 0x11c→0x124 (needs the blob's ratio×10 tail,
-        # fixed separately) and then 8002. The ACK-gated loop below only sends
-        # 8002 after the machine echoes (accepts) 8001, exactly like the app.
-        #
-        # (name, fixed_delay) — fixed_delay is the DEGRADED fallback (no echo
-        # stream). In the echo-gated path each frame waits for the machine's echo;
-        # 8002 fires only after the 8001 accept, so EXECUTE can't outrun the recipe.
-        sends = [
-            ("handshake", 0.5),
-            ("bypass+dose", 0.5),
-            ("set_cup", 0.5),
-            ("recipe", 0.5),
-            ("execute", 0.5),
-        ]
-
-        # Echo-gated send. The handshake is the canary: it is always the first
-        # frame and is always echoed on a live link (confirmed in both brew
-        # captures), so if even its echo never arrives despite start_notify
-        # having "succeeded" (the BlueZ "Notify acquired" failure mode, where
-        # the subscription is silently dead), we conclude the echo stream is
-        # unavailable and degrade the remaining frames to fixed-delay pacing
-        # rather than paying a full timeout on every one.
-        echo_gated = self._notify_active
-        for (name, delay), frame in zip(sends, frames):
-            if echo_gated:
-                # write_confirmed() writes the frame (with retries) and waits
-                # for its echo. The handshake is the canary — if its echo never
-                # comes, the stream is dead; degrade the REMAINING frames.
-                confirmed = await self.write_confirmed(name, frame)
-                if name == "handshake" and not confirmed:
-                    echo_gated = False
-                    log.warning(
-                        "No handshake echo on FFE2 — echo stream appears "
-                        "unavailable; falling back to fixed-delay pacing for "
-                        "the remaining brew frames"
-                    )
-                    continue  # handshake already written; degrade what's left
-                # Confirmed → fire the next frame promptly (app waits ~1-6 ms);
-                # unconfirmed on a live stream → conservative fixed settle.
-                await asyncio.sleep(SETTLE_AFTER_ECHO_S if confirmed else delay)
-                continue
-            # Degraded path: plain fire-and-forget write + fixed delay.
-            log.info(
-                "BLE write '%s' (degraded, %d bytes): %s",
-                name, len(frame), frame.hex(),
-            )
-            await self._client.write_gatt_char(FFE1_UUID, frame, response=False)
-            await asyncio.sleep(delay)
+        # Grind SIZE rides INSIDE the 8001 recipe blob — no separate 8006
+        # (APP_GRINDER_IN). The 8002 EXECUTE handler positions the burrs to the
+        # committed grind and grinds+brews autonomously. An injected 8006
+        # writes the grind registers AND bumps the work-state out-of-band,
+        # leaving the recipe commit inconsistent → the machine rejects with an
+        # abnormal-gear error (seen live at both grind 1 and 50). The recipe's
+        # size is applied only by 8001 committing, so 8002 goes out only once
+        # 8001 is accepted — exactly like the app, which stops at the first
+        # refused or unanswered step.
+        frames = build_brew_frames(recipe)
+        names = ("handshake", "bypass+dose", "set_cup", "recipe", "execute")
+        for name, frame in zip(names, frames):
+            if not await self.write_confirmed(name, frame):
+                raise CommandUnanswered(name)
+            await asyncio.sleep(SETTLE_AFTER_ECHO_S)
 
         if not self._client.is_connected:
             raise RuntimeError(

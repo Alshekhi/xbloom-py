@@ -319,6 +319,22 @@ FAULTS: dict[int, tuple[str, str]] = {
 }
 MACHINE_STATUSES: tuple[str, ...] = (MACHINE_OK, *(s for s, _ in FAULTS.values()))
 
+# Command refusals. A refused command is answered with its own code, exactly
+# like an accepted one; what differs is the error code in the reply's payload
+# (bytes 12-14, big-endian). These are the codes the official app treats as a
+# refusal (AppBleManager.processErrorMsg) — any other value, including none, it
+# treats as accepted. It words three of them and shows "Work in progress —
+# please wait until the task is done" for the rest.
+REPLY_REFUSALS: dict[int, str] = {
+    0x000040: "no_water",             # "Water shortage"
+    0x000800: "not_on_home_screen",   # "Please switch to the standby screen and retry."
+    0x400000: "recipe_rejected",      # "Recipe error — check water amount and pour settings."
+    **{code: "machine_busy" for code in (
+        0x000100, 0x000200, 0x000400, 0x004000, 0x010000, 0x020000,
+        0x040000, 0x080000, 0x100000, 0x200000, 0x800000,
+    )},
+}
+
 
 # --------------------------------------------------------------------------- #
 # Cup wire weight-range defaults (theMax, theMin) sent in the CMD_SET_CUP /    #
