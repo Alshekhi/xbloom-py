@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.1 — 2026-09-19
+
+Fixes lost frames, and brews that went ahead after the machine refused a step.
+
+- Under load one FFE2 notification can carry a weight reading, a water reading,
+  a command echo and a brew event back to back. Only the first frame was
+  decoded, so `RD_ENJOY`, the grinder starting, pours and command echoes behind
+  it were dropped: a finished brew could time out, and the heater frame could
+  be read as the pours beginning while the grinder was still running.
+- `split_notification()` walks the frames by the length each one declares, and
+  both notify handlers now handle every frame in order. A trailing frame cut
+  short at the notification's size limit is dropped.
+- A refused command is answered with its own code, just like an accepted one;
+  the refusal is an error code in the reply. It was never read, so any reply
+  counted as acceptance, and a step with no reply at all was passed over — so
+  `execute` could follow a recipe the machine had refused and grind at a stale
+  size. `write_confirmed` now raises `CommandRefused` for the codes the official
+  app treats as refusals (`spec.REPLY_REFUSALS`), and `brew()` raises
+  `CommandUnanswered` for a step that gets no reply, or when replies cannot be
+  read at all, rather than falling back to fixed delays. `execute` is only sent
+  once the recipe is accepted.
+- `spec.FIELDS["brewer_volume_ml"]` is the standalone brewer's range, 30-500 ml,
+  from the official app's brewer screen. `build_brewer_standalone_frame` refuses
+  a volume outside it: the pour stops when the flow meter reaches the target,
+  so a target of zero gives it nothing to stop at.
+- A mode-listener session can carry discrete commands: `send_confirmed()` waits
+  for the machine's answer and raises `CommandRefused` like a one-shot command,
+  so a host holding a session no longer has to open a second link — which tore
+  the session down. A session whose link drops, or whose write fails, now ends
+  itself as a failure with reason `connection_lost` instead of looking alive
+  until its idle timer.
+
 ## 0.2.0 — 2026-08-30
 
 Adds `recipe_build`, the layer that turns loose recipe fields into a recipe the
