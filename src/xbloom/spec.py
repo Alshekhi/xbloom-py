@@ -376,9 +376,26 @@ def refusal_for(code: int) -> str | None:
 
 
 # Answering a *re-send*, these mean the machine has moved on from the screen it
-# takes commands on — its copy of the first send was taken. The power-loss gate
-# is deliberately absent: it refuses everything and takes nothing.
-RESEND_MEANS_TAKEN: frozenset[str] = frozenset({"machine_busy", "restore_incomplete"})
+# takes commands on — its copy of the first send was taken, so the re-send is a
+# duplicate rather than a rejection.
+#
+# By code, not by reason, and only codes there is evidence for. `machine_busy`
+# covers nine codes and exactly one of them is confirmed: 0x800000, the
+# firmware's "not in a state that accepts this command" (fw_decompiled.c:2729),
+# reached while the busy flag is set. The other eight are inherited from an app
+# that shows one string for all of them — and 0x020000, one of that eight, is
+# the power-loss gate refusing on another screen. Treating an unproven code as
+# acceptance is what reported three brews as started while nothing was ground.
+RESEND_MEANS_TAKEN: frozenset[int] = frozenset({
+    0x800000,   # busy with the first copy — CONFIRMED in firmware
+    0x200000,   # the restore gate's second latch: a brew answered with it on a
+                # re-send went on to grind, pour and finish (2026-09-20)
+})
+
+
+def taken_on_resend(code: int | None) -> bool:
+    """Whether a refusal answering a re-send means the first send was taken."""
+    return any(code & bit for bit in RESEND_MEANS_TAKEN) if code else False
 
 
 # --------------------------------------------------------------------------- #

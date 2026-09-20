@@ -20,6 +20,11 @@ Refusals are read by the bit they set, and two of them were misread.
   grind, pour and finish, so its first copy had been taken.
 - `0x001000` is the refusal the back-to-home handler sends off the home screen.
   Neither app lists it, so it too read as an acceptance.
+- Which refusals may be read as "the first send was taken" is decided **by
+  code** now (`spec.taken_on_resend`), not by reason. One reason covers nine
+  codes and only `0x800000` is confirmed to be the busy one; another of the
+  nine is the power-loss gate refusing on a different screen. An unproven code
+  read as acceptance is the whole shape of the bug above.
 
 ## 0.3.0 — 2026-09-19
 

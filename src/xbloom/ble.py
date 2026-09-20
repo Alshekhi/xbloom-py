@@ -747,10 +747,16 @@ def reply_refusal(frame: bytes) -> str | None:
     whose bytes 12-14 hold the error code — where the app reads it — and only
     the bits in ``spec.REFUSAL_BITS`` count.
     """
+    code = refusal_code(frame)
+    return spec.refusal_for(code) if code else None
+
+
+def refusal_code(frame: bytes) -> int | None:
+    """The raw error field a command reply carries, or None when it has none."""
     payload = frame[10:-2]
     if len(payload) < 16:
         return None
-    return spec.refusal_for(int.from_bytes(payload[12:15], "big"))
+    return int.from_bytes(payload[12:15], "big") or None
 
 
 class CommandRefused(Exception):
@@ -780,10 +786,14 @@ class _Reply:
 
         self.event = asyncio.Event()
         self.refusal: str | None = None
+        # The raw code too: which refusals may be read as "the first send was
+        # taken" is decided per code, since one reason covers several.
+        self.refusal_code: int | None = None
 
-    def answer(self, refusal: str | None) -> None:
+    def answer(self, refusal: str | None, code: int | None = None) -> None:
         if not self.event.is_set():
             self.refusal = refusal
+            self.refusal_code = code
             self.event.set()
 
 
@@ -1129,7 +1139,10 @@ class XBloomBleClient:
         # call us from a worker thread, so hop to the connect-time loop.
         waiter = self._echo_waiters.get(cmd)
         if waiter is not None and self._loop is not None:
-            self._loop.call_soon_threadsafe(waiter.answer, reply_refusal(frame))
+            code = refusal_code(frame)
+            self._loop.call_soon_threadsafe(
+                waiter.answer, spec.refusal_for(code) if code else None, code,
+            )
 
         # Track sleep state for the retry decision (mirrors AppDeviceManager).
         if cmd == NOTIFY_SLEEPING:
@@ -1235,7 +1248,7 @@ class XBloomBleClient:
                     if reply.refusal is None:
                         log.debug("BLE '%s' (code %d) echo confirmed", name, code)
                         return True
-                    if reply.refusal in spec.RESEND_MEANS_TAKEN and attempt > 1:
+                    if attempt > 1 and spec.taken_on_resend(reply.refusal_code):
                         log.info(
                             "BLE '%s' (code %d): re-send refused (%s) — an "
                             "earlier send was taken", name, code, reply.refusal,

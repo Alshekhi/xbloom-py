@@ -469,6 +469,12 @@ def test_only_a_refusal_that_means_the_machine_moved_on_counts_as_taken():
             (0x100000, "not_ready"),        # the gate: nothing was taken
             (0x800000, None),               # busy: the first copy is running
             (0x200000, None),               # the gate's second latch — see below
+            # Read as busy, but only 0x800000 is confirmed to be. The rest are
+            # inherited from an app that shows one string for all of them, and
+            # one of them is the same gate refusing on another screen — so a
+            # re-send answered with any of them is a refusal, not a duplicate.
+            (0x020000, "machine_busy"),
+            (0x000100, "machine_busy"),
         ):
             fake = FakeClient()
             c = _mk_client(fake)
