@@ -745,12 +745,12 @@ def reply_refusal(frame: bytes) -> str | None:
     A refused command is answered with its own code, exactly like an accepted
     one, so the code alone proves nothing. A refusal has a 16-byte payload
     whose bytes 12-14 hold the error code — where the app reads it — and only
-    the codes in ``spec.REPLY_REFUSALS`` count.
+    the bits in ``spec.REFUSAL_BITS`` count.
     """
     payload = frame[10:-2]
     if len(payload) < 16:
         return None
-    return spec.REPLY_REFUSALS.get(int.from_bytes(payload[12:15], "big"))
+    return spec.refusal_for(int.from_bytes(payload[12:15], "big"))
 
 
 class CommandRefused(Exception):
@@ -1185,10 +1185,13 @@ class XBloomBleClient:
 
         Raises :class:`CommandRefused` when the answer is a refusal (see
         :func:`reply_refusal`) — a refused command is not re-sent. The one
-        exception is a ``machine_busy`` refusal answering a *re-send*: the
-        machine refuses a duplicate because it is already doing the first, so
-        an earlier send was taken. Every brew whose 8002 was re-sent shows
-        exactly one acceptance plus one busy refusal per duplicate.
+        exception is a refusal in ``spec.RESEND_MEANS_TAKEN`` answering a
+        *re-send*: those mean the machine has moved on from the screen it takes
+        commands on, so an earlier send was taken. Every brew whose 8002 was
+        re-sent shows exactly one acceptance plus one such refusal per
+        duplicate. The power-loss gate is not among them — it refuses
+        everything and takes nothing, and counting it as acceptance reported
+        three brews as started while the machine stood still.
 
         Requires ``self._notify_active`` — the caller must have subscribed to
         FFE2 and must degrade to a plain write + fixed delay when notifications
@@ -1232,10 +1235,10 @@ class XBloomBleClient:
                     if reply.refusal is None:
                         log.debug("BLE '%s' (code %d) echo confirmed", name, code)
                         return True
-                    if reply.refusal == "machine_busy" and attempt > 1:
+                    if reply.refusal in spec.RESEND_MEANS_TAKEN and attempt > 1:
                         log.info(
-                            "BLE '%s' (code %d): re-send refused as busy — an "
-                            "earlier send was taken", name, code,
+                            "BLE '%s' (code %d): re-send refused (%s) — an "
+                            "earlier send was taken", name, code, reply.refusal,
                         )
                         return True
                     log.warning(

@@ -2,13 +2,24 @@
 
 ## 0.3.1 — 2026-09-20
 
-- `0x100000` is its own refusal, `needs_calibration`, not one more "busy" code.
-  The distinction decides a brew: a **busy** refusal answering a re-sent frame
-  counts as acceptance, because the machine is already running the first copy.
-  Measured on the machine after a power cut — every command of three brews was
-  refused `0x100000`, each was read as accepted, and all three were reported as
-  started while nothing was ground or poured. Calibration cleared it, and the
-  brew straight after carried only `0x200000` / `0x800000`.
+Refusals are read by the bit they set, and two of them were misread.
+
+- A reply's error field is matched **bit by bit** (`spec.refusal_for`), not as
+  an exact value. The firmware ORs conditions into one field, so a pair such as
+  `0x400040` matched nothing and was read as an acceptance — a flaw both
+  official apps share.
+- `0x100000` is the firmware's post-power-loss gate, `not_ready`: it runs
+  before any command but the handshake and refuses everything until the
+  machine's restore latch is consumed on its standby screen. It had been one of
+  the "busy" codes, and a busy refusal answering a re-send counts as
+  acceptance, so three brews were reported as started while the machine ground
+  nothing (measured 2026-09-20; the code appears nowhere else in fifteen days
+  of logs). Only the codes in `spec.RESEND_MEANS_TAKEN` are read that way now.
+- `0x200000` is that gate's second latch, `restore_incomplete`, not a busy
+  code. It stays tolerated on a re-send: a brew answered with it went on to
+  grind, pour and finish, so its first copy had been taken.
+- `0x001000` is the refusal the back-to-home handler sends off the home screen.
+  Neither app lists it, so it too read as an acceptance.
 
 ## 0.3.0 — 2026-09-19
 

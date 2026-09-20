@@ -417,7 +417,7 @@ def test_brew_stops_when_the_machine_is_not_ready():
         with patch.object(ble, "SETTLE_AFTER_ECHO_S", 0):
             with pytest.raises(ble.CommandRefused) as err:
                 await c.brew(_RECIPE)
-        assert (err.value.step, err.value.reason) == ("bypass+dose", "needs_calibration")
+        assert (err.value.step, err.value.reason) == ("bypass+dose", "not_ready")
         assert 8001 not in fake.writes and 8002 not in fake.writes
     asyncio.run(go())
 
@@ -435,20 +435,41 @@ def test_a_real_busy_refusal_is_read():
     assert ble.reply_refusal(frame) == "machine_busy"
 
 
-def test_the_code_a_machine_awaiting_calibration_sends_is_its_own_refusal():
-    # Seen on the machine 2026-09-20: after a power cut it answered 0x100000 to
-    # every command of three brews — dose, cup, recipe and execute — and brewed
-    # nothing. Calibration from the machine's right knob cleared it, and the
-    # brew that followed was refused only with the busy codes below.
-    assert ble.reply_refusal(_refusal_frame(8001, 0x100000)) == "needs_calibration"
+def test_the_power_loss_gate_is_its_own_refusal():
+    # The firmware gates every command but the handshake on two latches left by
+    # an interrupted power cycle, and on the machine being back on its standby
+    # screen (fw_decompiled.c:1675-1704). 0x100000 is that gate refusing.
+    # Seen on the machine 2026-09-20: it answered 0x100000 to every command of
+    # three brews and ground nothing.
+    assert ble.reply_refusal(_refusal_frame(8001, 0x100000)) == "not_ready"
+    # The gate's second latch, and NOT a busy code, though it was read as one.
+    assert ble.reply_refusal(_refusal_frame(8102, 0x200000)) == "restore_incomplete"
 
 
-def test_a_calibration_refusal_is_never_read_as_an_earlier_send_being_taken():
-    # The busy exemption exists for a re-sent duplicate the machine is already
-    # running. Reading a calibration refusal that way reported three brews as
-    # started while the machine stood still.
+def test_the_refusal_a_back_to_home_gets_off_the_home_screen_is_read():
+    # Emitted by the 8022 handler (fw_decompiled.c:1860). Neither app lists it,
+    # so an exact-value table read it as an acceptance.
+    assert ble.reply_refusal(_refusal_frame(8022, 0x001000)) == "not_on_home_screen"
+
+
+def test_two_conditions_at_once_are_still_read():
+    # The firmware ORs conditions into one field, so an exact-value lookup
+    # missed the pair entirely and called it an acceptance.
+    assert ble.reply_refusal(_refusal_frame(8001, 0x400040)) == "no_water"
+
+
+def test_only_a_refusal_that_means_the_machine_moved_on_counts_as_taken():
+    # The exemption exists for a re-sent duplicate the machine is already
+    # running. Reading the power-loss gate that way reported three brews as
+    # started while the machine stood still. 0x200000 stays tolerated on a
+    # re-send: a brew that was answered with it on 2026-09-20 went on to grind,
+    # pour and finish, so its first copy had been taken.
     async def go():
-        for error, expected in ((0x100000, "needs_calibration"), (0x800000, None)):
+        for error, expected in (
+            (0x100000, "not_ready"),        # the gate: nothing was taken
+            (0x800000, None),               # busy: the first copy is running
+            (0x200000, None),               # the gate's second latch — see below
+        ):
             fake = FakeClient()
             c = _mk_client(fake)
             c._notify_active = True

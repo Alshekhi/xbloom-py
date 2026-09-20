@@ -328,26 +328,57 @@ MACHINE_STATUSES: tuple[str, ...] = (MACHINE_OK, *(s for s, _ in FAULTS.values()
 # refusal (AppBleManager.processErrorMsg) — any other value, including none, it
 # treats as accepted. It words three of them and shows "Work in progress —
 # please wait until the task is done" for the rest.
-REPLY_REFUSALS: dict[int, str] = {
-    0x000040: "no_water",             # "Water shortage"
-    0x000800: "not_on_home_screen",   # "Please switch to the standby screen and retry."
-    0x400000: "recipe_rejected",      # "Recipe error — check water amount and pour settings."
-    # The app shows one generic "work in progress" string for every remaining
-    # bit, but they are not one condition. 0x100000 is the machine declining
-    # until its grinder is calibrated: measured 2026-09-20, it answered every
-    # command of three brews with it — dose, cup, recipe, execute — and ground
-    # nothing; calibration from the machine's right knob cleared it, and the
-    # brew straight after was refused only as 0x200000 / 0x800000, the codes a
-    # machine already running the first copy of a re-sent frame sends. That
-    # distinction matters: a busy refusal answering a re-send counts as
-    # acceptance (see write_confirmed), and reading this one that way reported
-    # three brews as started while the machine stood still.
-    0x100000: "needs_calibration",
-    **{code: "machine_busy" for code in (
+# Why the machine refused a command, by the bit its reply carries.
+#
+# Read bit by bit, in this order, and never as an exact value: the firmware ORs
+# conditions into one 24-bit field (fw_decompiled.c:2247, 2252), so a pair such
+# as 0x400040 matched nothing in the exact-value table this replaced and was
+# read as an acceptance. Both apps have that same flaw.
+#
+# The first four are the app's own strings; the rest are from the firmware,
+# where every store into the field lives in one BLE dispatcher.
+REFUSAL_BITS: tuple[tuple[int, str], ...] = (
+    (0x000040, "no_water"),             # "Water shortage"
+    (0x000800, "not_on_home_screen"),   # "Please switch to the standby screen and retry."
+    # The same answer from the back-to-home handler itself, off the home screen
+    # (fw_decompiled.c:1860). Neither app lists it.
+    (0x001000, "not_on_home_screen"),
+    # A gate that runs before any command but the handshake, on two latches an
+    # interrupted power cycle leaves behind, and on the machine being back on
+    # its standby screen (fw_decompiled.c:1675-1704). Nothing in it reads a
+    # calibration flag — calibrating clears the latch and ends on standby,
+    # which is why it looks like a calibration state from outside. Measured
+    # 2026-09-20: every command of three brews refused 0x100000, nothing
+    # ground; in fifteen days of logs the code appears nowhere else.
+    (0x100000, "not_ready"),
+    # The same gate's second latch. NOT a busy code, though it was read as one
+    # — which matters, because a busy refusal answering a re-send counts as
+    # acceptance (see ble.RESEND_MEANS_TAKEN).
+    (0x200000, "restore_incomplete"),
+    (0x400000, "recipe_rejected"),      # "Recipe error — check water amount and pour settings."
+    *((code, "machine_busy") for code in (
         0x000100, 0x000200, 0x000400, 0x004000, 0x010000, 0x020000,
-        0x040000, 0x080000, 0x200000, 0x800000,
-    )},
-}
+        0x040000, 0x080000, 0x800000,
+    )),
+)
+
+# Every reason a reply can carry, for consumers that enumerate them (a
+# translated message per reason, say). Keyed by bit, like the tuple above.
+REPLY_REFUSALS: dict[int, str] = dict(REFUSAL_BITS)
+
+
+def refusal_for(code: int) -> str | None:
+    """The reason a refusal code carries, or None when no known bit is set."""
+    for bit, reason in REFUSAL_BITS:
+        if code & bit:
+            return reason
+    return None
+
+
+# Answering a *re-send*, these mean the machine has moved on from the screen it
+# takes commands on — its copy of the first send was taken. The power-loss gate
+# is deliberately absent: it refuses everything and takes nothing.
+RESEND_MEANS_TAKEN: frozenset[str] = frozenset({"machine_busy", "restore_incomplete"})
 
 
 # --------------------------------------------------------------------------- #
