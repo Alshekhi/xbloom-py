@@ -332,9 +332,20 @@ REPLY_REFUSALS: dict[int, str] = {
     0x000040: "no_water",             # "Water shortage"
     0x000800: "not_on_home_screen",   # "Please switch to the standby screen and retry."
     0x400000: "recipe_rejected",      # "Recipe error — check water amount and pour settings."
+    # The app shows one generic "work in progress" string for every remaining
+    # bit, but they are not one condition. 0x100000 is the machine declining
+    # until its grinder is calibrated: measured 2026-09-20, it answered every
+    # command of three brews with it — dose, cup, recipe, execute — and ground
+    # nothing; calibration from the machine's right knob cleared it, and the
+    # brew straight after was refused only as 0x200000 / 0x800000, the codes a
+    # machine already running the first copy of a re-sent frame sends. That
+    # distinction matters: a busy refusal answering a re-send counts as
+    # acceptance (see write_confirmed), and reading this one that way reported
+    # three brews as started while the machine stood still.
+    0x100000: "needs_calibration",
     **{code: "machine_busy" for code in (
         0x000100, 0x000200, 0x000400, 0x004000, 0x010000, 0x020000,
-        0x040000, 0x080000, 0x100000, 0x200000, 0x800000,
+        0x040000, 0x080000, 0x200000, 0x800000,
     )},
 }
 

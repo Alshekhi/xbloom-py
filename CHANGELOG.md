@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 — 2026-09-20
+
+- `0x100000` is its own refusal, `needs_calibration`, not one more "busy" code.
+  The distinction decides a brew: a **busy** refusal answering a re-sent frame
+  counts as acceptance, because the machine is already running the first copy.
+  Measured on the machine after a power cut — every command of three brews was
+  refused `0x100000`, each was read as accepted, and all three were reported as
+  started while nothing was ground or poured. Calibration cleared it, and the
+  brew straight after carried only `0x200000` / `0x800000`.
+
 ## 0.3.0 — 2026-09-19
 
 Fixes lost frames, and brews that went ahead after the machine refused a step.

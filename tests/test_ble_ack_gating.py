@@ -417,7 +417,7 @@ def test_brew_stops_when_the_machine_is_not_ready():
         with patch.object(ble, "SETTLE_AFTER_ECHO_S", 0):
             with pytest.raises(ble.CommandRefused) as err:
                 await c.brew(_RECIPE)
-        assert (err.value.step, err.value.reason) == ("bypass+dose", "machine_busy")
+        assert (err.value.step, err.value.reason) == ("bypass+dose", "needs_calibration")
         assert 8001 not in fake.writes and 8002 not in fake.writes
     asyncio.run(go())
 
@@ -433,6 +433,46 @@ def test_a_real_busy_refusal_is_read():
     # Received after a re-sent 8002, while the first one's brew was running.
     frame = bytes.fromhex("580207421f1c000000c10000000000000000000000008000001e949a")
     assert ble.reply_refusal(frame) == "machine_busy"
+
+
+def test_the_code_a_machine_awaiting_calibration_sends_is_its_own_refusal():
+    # Seen on the machine 2026-09-20: after a power cut it answered 0x100000 to
+    # every command of three brews — dose, cup, recipe and execute — and brewed
+    # nothing. Calibration from the machine's right knob cleared it, and the
+    # brew that followed was refused only with the busy codes below.
+    assert ble.reply_refusal(_refusal_frame(8001, 0x100000)) == "needs_calibration"
+
+
+def test_a_calibration_refusal_is_never_read_as_an_earlier_send_being_taken():
+    # The busy exemption exists for a re-sent duplicate the machine is already
+    # running. Reading a calibration refusal that way reported three brews as
+    # started while the machine stood still.
+    async def go():
+        for error, expected in ((0x100000, "needs_calibration"), (0x800000, None)):
+            fake = FakeClient()
+            c = _mk_client(fake)
+            c._notify_active = True
+            fake.notify_cb = c._on_notify
+            sends = []
+
+            async def answer(uuid, frame, response=False, _e=error):
+                # Only ever the refusal: the fake's own echo would be an
+                # acceptance, and the machine sent none of those here.
+                sends.append(frame)
+                if len(sends) == 1:
+                    return                      # first send unanswered
+                fake.loop.call_soon(lambda: fake.notify_cb(
+                    None, _refusal_frame(ble.frame_command_code(frame), _e)))
+            fake.write_gatt_char = answer
+
+            with patch.object(ble, "ECHO_TIMEOUT_S", 0.05):
+                if expected is None:
+                    assert await c.write_confirmed("tare", ble._build_frame(ble.CMD_TARE)) is True
+                else:
+                    with pytest.raises(ble.CommandRefused) as err:
+                        await c.write_confirmed("tare", ble._build_frame(ble.CMD_TARE))
+                    assert err.value.reason == expected
+    asyncio.run(go())
 
 
 def test_codes_the_app_does_not_treat_as_refusals_are_acceptances():
