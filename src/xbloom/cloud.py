@@ -97,7 +97,11 @@ _RSA_PUBLIC_KEY_B64 = (
 _RSA_CHUNK = 117
 
 # xBloom's error code for an expired session token (auth-flow.md).
-_TOKEN_EXPIRED_CODE = 10001
+# The two ways the vendor says "sign in again". 10001 arrives as `code`;
+# 20003 arrives as `resultCode` with the message in `info` and no `code` at
+# all — seen on a live account 2026-09-21, where it read as an ordinary API
+# error, so the session never re-logged in and the caller served stale data.
+_TOKEN_EXPIRED_CODES = frozenset({10001, 20003})
 
 
 def _load_public_key():
@@ -241,7 +245,7 @@ def _error_message(resp: dict) -> str:
 
 
 def _find_code(resp: dict) -> int | None:
-    for key in ("code", "errorCode", "result", "status"):
+    for key in ("code", "errorCode", "resultCode", "result", "status"):
         val = resp.get(key)
         try:
             return int(val)
@@ -251,10 +255,14 @@ def _find_code(resp: dict) -> int | None:
 
 
 def _raise_for_result(resp: dict, action: str) -> None:
-    """Raise if the response envelope isn't a success. Maps 10001 → auth error."""
+    """Raise if the response envelope isn't a success.
+
+    An expired session becomes an :class:`XBloomAuthError` with ``expired``
+    set, which is what makes the session re-log in by itself.
+    """
     if resp.get("result") == "success":
         return
-    if _find_code(resp) == _TOKEN_EXPIRED_CODE:
+    if _find_code(resp) in _TOKEN_EXPIRED_CODES:
         raise XBloomAuthError(f"{action}: session token expired", expired=True)
     raise XBloomAPIError(f"{action}: {_error_message(resp)}")
 

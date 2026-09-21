@@ -314,3 +314,38 @@ def test_language_type_for_unknown_defaults_english():
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --------------------------------------------------------------------------- #
+# An expired session must be recognisable                                     #
+# --------------------------------------------------------------------------- #
+# The vendor reports it two ways. Only the first was read, so the second came
+# through as an ordinary API error: the session never re-logged in, the
+# integration served its cached recipe list for hours, and nothing prompted a
+# sign-in — while its menu still said the account was signed in.
+def test_an_expired_session_is_an_auth_error_by_either_code():
+    import pytest
+    from xbloom import cloud
+
+    for envelope in (
+        {"result": "fail", "code": 10001, "msg": "token expired"},
+        # Seen on a live account 2026-09-21: no `code` at all, the number in
+        # `resultCode`, the message in `info`.
+        {"result": "fail", "resultCode": 20003, "loginUserType": "member",
+         "info": "用户身份验证已过期，请重新登录"},
+    ):
+        with pytest.raises(cloud.XBloomAuthError) as err:
+            cloud._raise_for_result(envelope, "list recipes")
+        assert err.value.expired is True
+
+
+def test_another_failure_is_not_read_as_an_expired_session():
+    import pytest
+    from xbloom import cloud
+
+    with pytest.raises(cloud.XBloomAPIError) as err:
+        cloud._raise_for_result(
+            {"result": "fail", "resultCode": 30010, "info": "recipe not found"},
+            "get recipe",
+        )
+    assert not isinstance(err.value, cloud.XBloomAuthError)

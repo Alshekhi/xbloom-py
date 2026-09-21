@@ -2,7 +2,16 @@
 
 ## 0.3.1 — 2026-09-20
 
-Refusals are read by the bit they set, and two of them were misread.
+Refusals are read by the bit they set, two of them were misread, and an
+expired cloud session was not recognised at all.
+
+- An expired session is reported two ways: `code` 10001, and `resultCode`
+  20003 with the message in `info` and no `code` at all. Only the first was
+  read, so the second raised an ordinary API error — the session never
+  re-logged in, and a caller served its cached data instead (seen on a live
+  account 2026-09-21, failing for hours while the integration still showed
+  the account as signed in). `resultCode` is read now, and both codes make
+  the session log in again on its own.
 
 - A reply's error field is matched **bit by bit** (`spec.refusal_for`), not as
   an exact value. The firmware ORs conditions into one field, so a pair such as
