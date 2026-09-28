@@ -152,3 +152,45 @@ def test_a_session_that_can_no_longer_write_ends_itself():
         assert await listener.send_live(ble._build_frame(ble.CMD_TARE)) is False
         await _ended_with(phases, "connection_lost")
     _run(test)
+
+
+_RECIPE = {
+    "name": "Test Recipe", "dose_g": 15, "grinder_size": 55, "rpm": 100, "cup_type": 3,
+    "water_ratio": 16, "pours": [
+        {"volume_ml": 90, "temperature_c": 93, "pattern": 2, "flow_rate": 3.0, "pause_s": 30},
+        {"volume_ml": 150, "temperature_c": 93, "pattern": 3, "flow_rate": 3.0, "pause_s": 0},
+    ],
+}
+_BREW_STEPS = [8102, 8104, 8001, 8002]
+
+
+def test_a_brew_over_the_session_sends_every_step_but_the_handshake():
+    # The session sent the handshake when it connected; sending it again costs
+    # a round trip before the first real step.
+    async def test(listener, link, _phases):
+        for code in _BREW_STEPS:
+            link.answers[code] = None
+        before = link.writes.count(ble.CMD_HANDSHAKE)
+        await listener.send_brew(_RECIPE)
+        assert [c for c in link.writes if c in _BREW_STEPS] == _BREW_STEPS
+        assert link.writes.count(ble.CMD_HANDSHAKE) == before
+    _run(test)
+
+
+def test_a_refused_step_stops_the_brew_before_execute():
+    async def test(listener, link, _phases):
+        link.answers.update({8102: None, 8104: None, 8001: 0x000040})
+        with pytest.raises(ble.CommandRefused):
+            await listener.send_brew(_RECIPE)
+        assert 8002 not in link.writes
+    _run(test)
+
+
+def test_an_unanswered_step_stops_the_brew_before_execute():
+    async def test(listener, link, _phases):
+        link.answers.update({8102: None, 8104: None})
+        with patch.object(ble, "ECHO_TIMEOUT_S", 0.02):
+            with pytest.raises(ble.CommandUnanswered):
+                await listener.send_brew(_RECIPE)
+        assert 8002 not in link.writes
+    _run(test)

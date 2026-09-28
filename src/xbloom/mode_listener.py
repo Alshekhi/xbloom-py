@@ -39,7 +39,8 @@ import time
 from typing import Any, Awaitable, Callable, Coroutine
 
 from .ble import (
-    CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, CommandRefused, _build_frame,
+    CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, SETTLE_AFTER_ECHO_S,
+    CommandRefused, CommandUnanswered, _build_frame, build_brew_frames,
     decode_notification, split_notification,
 )
 
@@ -188,6 +189,40 @@ class XBloomModeListener:
         except Exception as err:  # noqa: BLE001
             self._link_lost = str(err)
             raise
+
+    async def send_brew(self, recipe: dict) -> None:
+        """Send a recipe brew over the *held* session.
+
+        The same sequence as :meth:`XBloomBleClient.brew`, minus the handshake,
+        which the session already sent when it connected: bypass+dose, set-cup,
+        recipe, execute, each only once the machine accepted the last. Closing
+        the session to brew on a link of its own cost a disconnect, a connect
+        and a handshake before the first step.
+
+        Raises :class:`~xbloom.ble.CommandRefused` when the machine refuses a
+        step and :class:`~xbloom.ble.CommandUnanswered` when one gets no reply;
+        either way execute is never sent. Returns once execute is accepted.
+        """
+        ble = self._ble
+        if ble is None:
+            raise RuntimeError(f"[{self.mode_name} mode] no session holds the link")
+        frames = build_brew_frames(recipe)[1:]
+        names = ("bypass+dose", "set_cup", "recipe", "execute")
+        for name, frame in zip(names, frames):
+            try:
+                accepted = await ble.write_confirmed(name, frame)
+            except CommandRefused:
+                raise
+            except Exception as err:  # noqa: BLE001
+                self._link_lost = str(err)
+                raise
+            if not accepted:
+                raise CommandUnanswered(name)
+            await asyncio.sleep(SETTLE_AFTER_ECHO_S)
+        _LOGGER.info(
+            "[%s mode] brew sequence sent for recipe '%s' over the held session",
+            self.mode_name, recipe.get("name"),
+        )
 
     # ---- Subclass hooks ------------------------------------------------ #
     async def _read_initial_state(self) -> dict:
