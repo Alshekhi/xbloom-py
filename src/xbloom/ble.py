@@ -683,6 +683,15 @@ NOTIFY_BLOOM            = 40510
 NOTIFY_ENJOY            = 40512
 NOTIFY_MACHINE_INFO     = 40521  # RD_MachineInfo — periodic status heartbeat
 
+# A recipe brew paused and resumed. Seen live 2026-09-28 on V12.0D.500: the
+# echo of CMD_BREW_PAUSE (40518) was followed by 40515, and the echo of
+# CMD_BREW_RESUME (40524) by 40516, both in the middle of a recipe brew. The
+# app's code table names 40515 RD_TEA_RECIP_PAUSE, yet a coffee recipe sends
+# it too. Only a pause sent over Bluetooth has been observed; whether a pause
+# made at the machine sends the same frames is not yet known.
+NOTIFY_BREW_PAUSED      = 40515
+NOTIFY_BREW_RESUMED     = 40516
+
 # Decoded live during 08-05 capture sessions on firmware V12.0D.500.
 # All four payloads are LE uint32 in the first 4 bytes.
 NOTIFY_GRIND_SIZE       = 8105   # 0x1FA9 — grinder size knob change
