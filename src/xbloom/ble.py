@@ -744,6 +744,14 @@ NOTIFY_AWAKE            = 8011   # RD_MachineNotSleeping — machine woke
 # never precedes the 8001 echo.
 # ---------------------------------------------------------------------------
 ECHO_TIMEOUT_S      = 1.5    # app's DefaultTimeOut (1500 ms) per command
+# A brew's steps wait longer, and re-send at most once. The app's 1.5 s assumes
+# the machine answers within ~0.4 s, as it does to a phone; over a Linux host's
+# adapter answers were measured at ~1.6 s (2026-09-28), so a 1.5 s wait re-sent
+# every step up to three times, the machine answered every copy, and the extra
+# answers queued ahead of the next step's — an 11 s preparation that one send
+# per step does in about 5. 3 s is the app's own wait for the recipe (8001).
+BREW_STEP_TIMEOUT_S = 3.0
+BREW_STEP_ATTEMPTS  = 2
 ECHO_MAX_ATTEMPTS   = 3      # app resends until retryCount reaches 3 (3 sends)
 SETTLE_AFTER_ECHO_S = 0.1    # small margin after an echo before the next write
                              # (app fires within ~1-6 ms; we stay conservative)
@@ -1470,7 +1478,9 @@ class XBloomBleClient:
         frames = build_brew_frames(recipe)
         names = ("handshake", "bypass+dose", "set_cup", "recipe", "execute")
         for name, frame in zip(names, frames):
-            if not await self.write_confirmed(name, frame):
+            if not await self.write_confirmed(
+                name, frame, timeout=BREW_STEP_TIMEOUT_S, max_attempts=BREW_STEP_ATTEMPTS,
+            ):
                 raise CommandUnanswered(name)
             await asyncio.sleep(SETTLE_AFTER_ECHO_S)
 

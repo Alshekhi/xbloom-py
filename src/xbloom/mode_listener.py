@@ -230,8 +230,13 @@ class XBloomModeListener:
         ble = self._ble
         if ble is None:
             raise RuntimeError(f"[{self.mode_name} mode] no session holds the link")
+        from . import ble as _ble
+
         try:
-            accepted = await ble.write_confirmed(name, frame)
+            accepted = await ble.write_confirmed(
+                name, frame,
+                timeout=_ble.BREW_STEP_TIMEOUT_S, max_attempts=_ble.BREW_STEP_ATTEMPTS,
+            )
         except CommandRefused:
             raise
         except Exception as err:  # noqa: BLE001

@@ -189,7 +189,7 @@ def test_a_refused_step_stops_the_brew_before_execute():
 def test_an_unanswered_step_stops_the_brew_before_execute():
     async def test(listener, link, _phases):
         link.answers.update({8102: None, 8104: None})
-        with patch.object(ble, "ECHO_TIMEOUT_S", 0.02):
+        with patch.object(ble, "BREW_STEP_TIMEOUT_S", 0.02):
             with pytest.raises(ble.CommandUnanswered):
                 await listener.send_brew(_RECIPE)
         assert 8002 not in link.writes
@@ -211,3 +211,54 @@ def test_a_prepared_recipe_starts_with_execute_alone():
 
 def test_quitting_a_prepared_recipe_is_its_own_command():
     assert ble.frame_command_code(ble.packet_quit_recipe()) == ble.CMD_QUIT_RECIPE == 8017
+
+
+
+class SlowLink(FakeLink):
+    """Answers after a delay, as the machine does over a slow adapter."""
+
+    delay = 0.05
+
+    async def write_gatt_char(self, _uuid, frame, response=False):
+        code = ble.frame_command_code(frame)
+        self.writes.append(code)
+        if code in self.answers:
+            asyncio.get_running_loop().call_later(
+                self.delay, self.callback, None, _reply(code, self.answers[code]),
+            )
+
+
+def _run_slow(test):
+    async def go():
+        link, phases = SlowLink(), []
+        with patch.object(ble, "XBloomBleClient", _client_class(link)), \
+             patch.object(mode_listener, "HOLD_TICK_S", 0.01), \
+             patch.object(mode_listener, "INITIAL_STATE_TIMEOUT_SEC", 0.05):
+            listener = await _held_session(link, phases)
+            try:
+                await test(listener, link, phases)
+            finally:
+                await listener.stop()
+    asyncio.run(go())
+
+
+def test_a_slow_answer_within_the_wait_is_not_re_sent():
+    # Answers slower than the app's 1.5 s, still inside a brew step's wait:
+    # one send each. Every re-send is answered too, and the extra answers
+    # queue ahead of the next step's.
+    async def test(listener, link, _phases):
+        for code in _BREW_STEPS:
+            link.answers[code] = None
+        with patch.object(ble, "ECHO_TIMEOUT_S", 0.02), patch.object(ble, "BREW_STEP_TIMEOUT_S", 0.2):
+            await listener.send_prepare(_RECIPE)
+        assert [c for c in link.writes if c in _BREW_STEPS] == [8102, 8104, 8001]
+    _run_slow(test)
+
+
+def test_an_unanswered_step_is_sent_twice_at_most():
+    async def test(listener, link, _phases):
+        with patch.object(ble, "BREW_STEP_TIMEOUT_S", 0.02):
+            with pytest.raises(ble.CommandUnanswered):
+                await listener.send_prepare(_RECIPE)
+        assert link.writes.count(8102) == 2
+    _run_slow(test)
