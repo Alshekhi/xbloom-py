@@ -39,7 +39,7 @@ import time
 from typing import Any, Awaitable, Callable, Coroutine
 
 from .ble import (
-    CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, SETTLE_AFTER_ECHO_S,
+    CMD_EXECUTE, CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, SETTLE_AFTER_ECHO_S,
     CommandRefused, CommandUnanswered, _build_frame, build_brew_frames,
     decode_notification, split_notification,
 )
@@ -203,26 +203,43 @@ class XBloomModeListener:
         step and :class:`~xbloom.ble.CommandUnanswered` when one gets no reply;
         either way execute is never sent. Returns once execute is accepted.
         """
+        await self.send_prepare(recipe)
+        await self.send_start()
+
+    async def send_prepare(self, recipe: dict) -> None:
+        """Send a recipe without starting it: bypass+dose, set-cup, recipe.
+
+        The official app does this on its first tap and sends execute alone on
+        the second, once the cup is placed, so the start is one round trip.
+        A recipe sent over one already prepared replaces it, as in the app.
+        """
+        frames = build_brew_frames(recipe)[1:4]
+        for name, frame in zip(("bypass+dose", "set_cup", "recipe"), frames):
+            await self._confirmed_step(name, frame)
+        _LOGGER.info(
+            "[%s mode] recipe '%s' prepared over the held session",
+            self.mode_name, recipe.get("name"),
+        )
+
+    async def send_start(self) -> None:
+        """Start the recipe the machine was last sent (execute)."""
+        await self._confirmed_step("execute", _build_frame(CMD_EXECUTE))
+        _LOGGER.info("[%s mode] brew started over the held session", self.mode_name)
+
+    async def _confirmed_step(self, name: str, frame: bytes) -> None:
         ble = self._ble
         if ble is None:
             raise RuntimeError(f"[{self.mode_name} mode] no session holds the link")
-        frames = build_brew_frames(recipe)[1:]
-        names = ("bypass+dose", "set_cup", "recipe", "execute")
-        for name, frame in zip(names, frames):
-            try:
-                accepted = await ble.write_confirmed(name, frame)
-            except CommandRefused:
-                raise
-            except Exception as err:  # noqa: BLE001
-                self._link_lost = str(err)
-                raise
-            if not accepted:
-                raise CommandUnanswered(name)
-            await asyncio.sleep(SETTLE_AFTER_ECHO_S)
-        _LOGGER.info(
-            "[%s mode] brew sequence sent for recipe '%s' over the held session",
-            self.mode_name, recipe.get("name"),
-        )
+        try:
+            accepted = await ble.write_confirmed(name, frame)
+        except CommandRefused:
+            raise
+        except Exception as err:  # noqa: BLE001
+            self._link_lost = str(err)
+            raise
+        if not accepted:
+            raise CommandUnanswered(name)
+        await asyncio.sleep(SETTLE_AFTER_ECHO_S)
 
     # ---- Subclass hooks ------------------------------------------------ #
     async def _read_initial_state(self) -> dict:

@@ -194,3 +194,20 @@ def test_an_unanswered_step_stops_the_brew_before_execute():
                 await listener.send_brew(_RECIPE)
         assert 8002 not in link.writes
     _run(test)
+
+
+def test_a_prepared_recipe_starts_with_execute_alone():
+    # The app sends the recipe on its first tap and only execute on the
+    # second, so starting is one round trip.
+    async def test(listener, link, _phases):
+        for code in _BREW_STEPS:
+            link.answers[code] = None
+        await listener.send_prepare(_RECIPE)
+        assert [c for c in link.writes if c in _BREW_STEPS] == [8102, 8104, 8001]
+        await listener.send_start()
+        assert [c for c in link.writes if c in _BREW_STEPS] == _BREW_STEPS
+    _run(test)
+
+
+def test_quitting_a_prepared_recipe_is_its_own_command():
+    assert ble.frame_command_code(ble.packet_quit_recipe()) == ble.CMD_QUIT_RECIPE == 8017

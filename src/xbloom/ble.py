@@ -408,6 +408,13 @@ CMD_BACK_TO_HOME  = 8022   # 0x1F56 — home, but ONLY from home/standby: the fw
 CMD_QUIT_GRINDER  = 8012   # 0x1F4C — leave grinder screen → home (app back-press)
 CMD_QUIT_BREWER   = 8013   # 0x1F4D — leave brewer screen → home
 CMD_QUIT_SCALE    = 8014   # 0x1F4E — leave scale screen → home
+CMD_QUIT_RECIPE   = 8017   # 0x1F51 — APP_RECIPE_START_QUIT, "exit recipe start
+                           #   screen": what the Android app sends when its
+                           #   place-your-cup dialog is dismissed after a recipe
+                           #   was sent and before execute (RecipeDetailActivity,
+                           #   BleCodeFactory.quitRecipeStart). The firmware
+                           #   routes it to the same quit handler as 8012-8014
+                           #   (fw:1769-1783); not yet seen on the machine.
 # Full-process (recipe/auto) brew controls — confirmed from the Android app's
 # AppJ15AutoManager (pause/restart/stop), which drives exactly the kind of brew
 # start_brew runs. These are DISTINCT from the standalone-brewer controls
@@ -449,6 +456,11 @@ def packet_quit_brewer() -> bytes:
 def packet_quit_scale() -> bytes:
     """Leave the scale screen → home (cmd 8014, the app's scale back-press)."""
     return _build_frame(CMD_QUIT_SCALE)
+
+
+def packet_quit_recipe() -> bytes:
+    """Drop a recipe that was sent but not started (cmd 8017), and go home."""
+    return _build_frame(CMD_QUIT_RECIPE)
 
 
 def packet_brew_pause() -> bytes:
