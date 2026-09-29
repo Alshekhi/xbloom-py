@@ -699,10 +699,26 @@ NOTIFY_MACHINE_INFO     = 40521  # RD_MachineInfo — periodic status heartbeat
 # echo of CMD_BREW_PAUSE (40518) was followed by 40515, and the echo of
 # CMD_BREW_RESUME (40524) by 40516, both in the middle of a recipe brew. The
 # app's code table names 40515 RD_TEA_RECIP_PAUSE, yet a coffee recipe sends
-# it too. Only a pause sent over Bluetooth has been observed; whether a pause
-# made at the machine sends the same frames is not yet known.
+# it too. A pause made at the machine does not send them: see below.
 NOTIFY_BREW_PAUSED      = 40515
 NOTIFY_BREW_RESUMED     = 40516
+
+# A recipe brew paused and resumed with the machine's own knob, and one left
+# for the home screen. Seen live 2026-09-28/29 on V12.0D.500, on brews started
+# at the machine after a recipe was sent over Bluetooth:
+#   * a pause while grinding sent 9009 (RD_GRINDER_PAUSE), then 40507 (grinder
+#     stopped) and activity 31 — so a 40507 straight after 9009 is a pause, not
+#     the grind finishing, which sends 40507 then activity 16;
+#   * a pause while pouring sent 9010 (RD_BREWER_PAUSE), then activity 31;
+#   * resuming sent 9011 (the app names it RD_TEA_RECIP_RESTART), then the
+#     phase's activity again (34 grinding);
+#   * leaving a paused brew for the home screen sent 40513 (RD_ENJOY2) and
+#     activity 1, twice, and a brew that finished normally sent 40511 and 40512
+#     but no 40513 — so 40513 means the brew was abandoned, not finished.
+NOTIFY_GRINDER_PAUSED   = 9009
+NOTIFY_BREWER_PAUSED    = 9010
+NOTIFY_MACHINE_RESUMED  = 9011
+NOTIFY_BREW_ABANDONED   = 40513
 
 # Decoded live during 08-05 capture sessions on firmware V12.0D.500.
 # All four payloads are LE uint32 in the first 4 bytes.
