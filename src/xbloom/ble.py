@@ -899,8 +899,16 @@ def split_notification(data: bytes) -> list[bytes]:
         )
         if length < 12 or length > len(rest):
             if not frames:
+                # A notification that does not open on a frame would be the
+                # remainder of one cut short in the one before — which the
+                # docstring assumes never happens. Logged to check that.
+                if data[:2] != b"\x58\x02":
+                    log.debug("notification opens mid-frame: %s", data.hex())
                 return [data]
-            log.debug("dropping %d trailing bytes that are not a whole frame", len(rest))
+            log.debug(
+                "dropping %d trailing bytes that are not a whole frame: %s (after %s)",
+                len(rest), rest.hex(), " ".join(f[:12].hex() for f in frames),
+            )
             break
         frames.append(rest[:length])
         i += length
