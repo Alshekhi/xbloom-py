@@ -41,7 +41,7 @@ from typing import Any, Awaitable, Callable, Coroutine
 from .ble import (
     CMD_EXECUTE, CMD_HANDSHAKE, FFE1_UUID, FFE2_UUID, HANDSHAKE_DATA, SETTLE_AFTER_ECHO_S,
     CommandRefused, CommandUnanswered, _build_frame, build_brew_frames,
-    decode_notification, split_notification,
+    NotificationAssembler, decode_notification,
 )
 
 _LOGGER = logging.getLogger("xbloom.mode_listener")
@@ -102,6 +102,8 @@ class XBloomModeListener:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client = None       # bleak.BleakClient | None
+        # Joins a frame the machine splits across two notifications.
+        self._frames = NotificationAssembler()
         self._ble = None          # the XBloomBleClient holding the session
         # Why the link was found gone, once it was — the hold loop ends the
         # session on it rather than waiting out the idle timer.
@@ -295,6 +297,8 @@ class XBloomModeListener:
                 self._raw_callback = _raw_callback
 
                 try:
+                    # A new subscription starts on a fresh frame.
+                    self._frames.reset()
                     await self._client.start_notify(FFE2_UUID, _raw_callback)
                     _LOGGER.debug(
                         "[%s mode] start_notify FFE2 ok", self.mode_name,
@@ -395,7 +399,7 @@ class XBloomModeListener:
 
     def _on_notify(self, _char, data: bytes) -> None:
         # One notification can carry several frames; each is handled in order.
-        for frame in split_notification(bytes(data)):
+        for frame in self._frames.feed(bytes(data)):
             self._on_frame(frame)
 
     def _on_frame(self, frame: bytes) -> None:

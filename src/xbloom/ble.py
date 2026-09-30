@@ -875,6 +875,45 @@ def parse_ffe3_packet(data: bytes) -> dict | None:
     return {"code": code, "data_bytes": data_bytes, "data_float": data_float}
 
 
+# No frame the machine sends comes near this; a length field beyond it is not a
+# frame's length, and waiting for that many bytes would swallow the link.
+MAX_FRAME_LEN = 1024
+
+
+def _frame_length(data: bytes) -> int | None:
+    """The total length a 5802 frame at the start of `data` declares, or None
+    when `data` does not open on a frame whose length can be read."""
+    if len(data) < 9 or data[0] != 0x58 or data[1] != 0x02:
+        return None
+    length = struct.unpack_from("<I", data, 5)[0]
+    return length if 12 <= length <= MAX_FRAME_LEN else None
+
+
+def _crc_ok(frame: bytes) -> bool:
+    return len(frame) >= 12 and _crc16(frame[:-2]) == struct.unpack_from("<H", frame, len(frame) - 2)[0]
+
+
+def _walk(data: bytes) -> tuple[list[bytes], bytes]:
+    """The whole frames at the start of `data`, and whatever follows them."""
+    frames: list[bytes] = []
+    i = 0
+    while i < len(data):
+        length = _frame_length(data[i:])
+        if length is None or length > len(data) - i:
+            break
+        frames.append(data[i:i + length])
+        i += length
+    return frames, data[i:]
+
+
+def _could_open_a_frame(data: bytes) -> bool:
+    """`data` is the start of a frame the next notification may complete."""
+    if data[:2] == b"\x58\x02"[:len(data[:2])] and len(data) < 9:
+        return True
+    length = _frame_length(data)
+    return length is not None and length > len(data)
+
+
 def split_notification(data: bytes) -> list[bytes]:
     """Split one FFE2 notification into the 5802 frames packed inside it.
 
@@ -885,34 +924,71 @@ def split_notification(data: bytes) -> list[bytes]:
 
     A notification whose first frame cannot be walked by that length is
     returned whole, so it decodes exactly as a lone frame always has. A
-    trailing frame cut short by the notification's size limit is dropped — the
-    next notification starts on a fresh frame, never on its remainder.
+    trailing frame cut short is dropped here; NotificationAssembler keeps it
+    for the next notification, which is where the rest of it arrives.
     """
-    frames: list[bytes] = []
-    i = 0
-    while i < len(data):
-        rest = data[i:]
-        length = (
-            struct.unpack_from("<I", rest, 5)[0]
-            if len(rest) >= 9 and rest[0] == 0x58 and rest[1] == 0x02
-            else 0
-        )
-        if length < 12 or length > len(rest):
-            if not frames:
-                # A notification that does not open on a frame would be the
-                # remainder of one cut short in the one before — which the
-                # docstring assumes never happens. Logged to check that.
-                if data[:2] != b"\x58\x02":
-                    log.debug("notification opens mid-frame: %s", data.hex())
-                return [data]
-            log.debug(
-                "dropping %d trailing bytes that are not a whole frame: %s (after %s)",
-                len(rest), rest.hex(), " ".join(f[:12].hex() for f in frames),
-            )
-            break
-        frames.append(rest[:length])
-        i += length
+    frames, rest = _walk(data)
+    if not frames:
+        return [data]
+    if rest:
+        log.debug("dropping %d trailing bytes that are not a whole frame", len(rest))
     return frames
+
+
+class NotificationAssembler:
+    """Splits a link's notifications into frames, joining any split between two.
+
+    The machine packs frames into notifications of a limited size and carries a
+    frame that does not fit over into the next one. Seen live 2026-09-30 on
+    V12.0D.500: a notification ended `58020715` and the next began
+    `5010000000c10000000016b5` — together one weight frame whose checksum
+    holds. Treating each notification alone dropped both halves; any frame can
+    be split this way, ENJOY and faults included.
+
+    One per link, fed every notification in order. The start of a frame left
+    at the end of one is joined to the next, and kept only if the joined frame
+    passes its checksum; otherwise it was not a split frame after all, and the
+    next notification is read on its own.
+    """
+
+    def __init__(self) -> None:
+        self._pending = b""
+
+    def reset(self) -> None:
+        """Forget a partial frame: the link it came over has gone."""
+        self._pending = b""
+
+    def feed(self, data: bytes) -> list[bytes]:
+        frames: list[bytes] = []
+        if self._pending:
+            joined = self._pending + data
+            length = _frame_length(joined)
+            if length is not None and length > len(joined):
+                # Still not all of it: a frame longer than two notifications.
+                self._pending = joined
+                return []
+            pending, self._pending = self._pending, b""
+            if length is not None and _crc_ok(joined[:length]):
+                frames.append(joined[:length])
+                data = joined[length:]
+            else:
+                log.debug("dropping %d bytes of a frame never completed: %s",
+                          len(pending), pending.hex())
+        if not data:
+            return frames
+        walked, rest = _walk(data)
+        if not walked and not frames and not _could_open_a_frame(data):
+            # Not a frame the length can walk: decoded whole, as a lone frame
+            # always has been.
+            return [data]
+        frames.extend(walked)
+        if rest:
+            if _could_open_a_frame(rest):
+                self._pending = rest
+            else:
+                log.debug("dropping %d trailing bytes that are not a frame: %s",
+                          len(rest), rest.hex())
+        return frames
 
 
 def _ascii_field(payload: bytes, start: int, end: int) -> str | None:
@@ -1095,6 +1171,8 @@ class XBloomBleClient:
         # RD_MachineSleeping/NotSleeping for the retry decision.
         self._notify_active = False
         self._echo_waiters: dict[int, _Reply] = {}
+        # Joins a frame the machine splits across two notifications.
+        self._frames = NotificationAssembler()
         self._sleeping = False
         # Resolved by _on_notify with the next RD_MachineInfo heartbeat, so
         # read_status_snapshot() can await a fresh status frame.
@@ -1174,7 +1252,7 @@ class XBloomBleClient:
         # Zero-risk: log only. bleak hands us a bytearray; hex() it verbatim.
         raw = bytes(data)
         log.debug("BLE raw notify frame: %s", raw.hex())
-        for frame in split_notification(raw):
+        for frame in self._frames.feed(raw):
             self._on_frame(frame)
 
     def note_reply(self, frame: bytes) -> None:
@@ -1346,6 +1424,8 @@ class XBloomBleClient:
         if self._notify_active or self._client is None:
             return self._notify_active
         try:
+            # A new subscription starts on a fresh frame.
+            self._frames.reset()
             await self._client.start_notify(FFE2_UUID, self._on_notify)
             self._notify_active = True
             log.debug("FFE2 notifications enabled")
