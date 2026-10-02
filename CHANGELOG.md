@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.0 — 2026-10-02
+
+A recipe can be sent ahead over a held connection and started separately, and
+frames the machine splits across two notifications are no longer lost.
+
+- **Brew over a held session.** `XBloomModeListener.send_brew()` sends a recipe
+  brew's steps over the session the listener already holds, each only once the
+  machine accepted the last, and never execute after a refused or unanswered
+  step. A host holding a session no longer has to close it and open a link of
+  its own.
+- **Prepare and start separately**, as the official app does on its two taps:
+  `send_prepare()` sends bypass+dose, set-cup and the recipe; `send_start()`
+  sends execute. `packet_quit_recipe()` builds the app's command for dropping a
+  recipe that was sent but not started.
+- **Frames split across two notifications are joined.** The machine carries a
+  frame that does not fit in one notification over into the next, and each
+  notification was split on its own, so both halves were dropped (seen
+  2026-09-30 on V12.0D.500, weight and water frames). `NotificationAssembler`
+  keeps the start of such a frame and joins it to the next notification,
+  keeping the result only if its checksum holds. `XBloomBleClient` and the mode
+  listener each use one per link.
+- **Each brew step waits 3 s and is re-sent at most once.** Over a Linux host's
+  adapter the machine answers in about 1.6 s, past the app's 1.5 s wait, so
+  steps were re-sent up to three times and the extra answers queued ahead of
+  the next step's.
+- **New frame names:** `NOTIFY_BREW_PAUSED` (40515) and `NOTIFY_BREW_RESUMED`
+  (40516) for a pause and resume sent over Bluetooth; `NOTIFY_GRINDER_PAUSED`
+  (9009), `NOTIFY_BREWER_PAUSED` (9010) and `NOTIFY_MACHINE_RESUMED` (9011) for
+  one made with the machine's knob; `NOTIFY_BREW_ABANDONED` (40513) for a brew
+  left for the home screen. A finished brew sends 40511 and 40512 instead.
+
 ## 0.3.1 — 2026-09-20
 
 Refusals are read by the bit they set, two of them were misread, and an
