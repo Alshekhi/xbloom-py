@@ -10,6 +10,9 @@
   and sorts by date, likes or downloads; `detail()` adds the description and
   pours. `language="zh"` or `"ar"` has the hub answer in Chinese or Arabic.
   Each recipe's `share_url` opens the complete recipe through `XBloomClient`.
+- **The source archive carries the package only:** `src/xbloom`, the README,
+  LICENSE and CHANGELOG. Tests, CI workflows and the lockfile stay in the
+  repository.
 
 ## 0.4.0 — 2026-10-02
 
