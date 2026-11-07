@@ -6,8 +6,9 @@
   recipes shared on xBloom's community hub, the library behind the app's
   community section, with no account. `search()` filters by keyword, machine,
   coffee or tea, official or community, origin, varietal, process, roast,
-  flavor and cup type, each named as `criteria()` lists them, and sorts by
-  date or likes; `detail()` adds the description and pours. Each recipe's
+  flavor and cup type, each named as `criteria()` lists them or in English,
+  and sorts by date, likes or downloads; `detail()` adds the description and
+  pours. Each recipe's
   `share_url` opens the complete recipe through `XBloomClient`.
 
 ## 0.4.0 — 2026-10-02

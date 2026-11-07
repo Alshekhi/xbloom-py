@@ -196,3 +196,36 @@ async def test_language_header(language, sent):
     s = session()
     await XBloomCommunityClient(s, language=language).criteria()
     assert s.calls[0][2]["LanguageType"] == sent
+
+
+async def test_downloads_is_the_third_sort():
+    s = session()
+    await XBloomCommunityClient(s).search(sort="downloads")
+    assert search_body(s)["sort"] == 3
+
+
+CRITERIA_ZH = {**CRITERIA, "originList": [{"name": "肯尼亚", "value": "9"}, {"name": "秘鲁", "value": "15"}]}
+
+
+class LanguageSession(FakeSession):
+    """Answers the criteria in the language each request asks for."""
+
+    def post(self, url, json=None, headers=None):
+        if url.endswith("criteria"):
+            self.calls.append((url, json, headers))
+            return FakeResponse(ok(CRITERIA_ZH if headers["LanguageType"] == "3" else CRITERIA))
+        return super().post(url, json=json, headers=headers)
+
+
+async def test_an_english_name_works_in_another_language():
+    s = LanguageSession({"communityRecipe/index/page": page([LISTED])})
+    client = XBloomCommunityClient(s, language="zh")
+    await client.search(origins=["肯尼亚", "Peru"])
+    assert search_body(s)["originIds"] == [9, 15]
+    assert [h["LanguageType"] for url, _, h in s.calls if url.endswith("criteria")] == ["3", "0"]
+
+
+async def test_english_criteria_are_not_fetched_for_an_english_client():
+    s = session()
+    await XBloomCommunityClient(s).search(origins=["Kenya"])
+    assert sum(url.endswith("criteria") for url, _, _ in s.calls) == 1

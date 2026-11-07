@@ -47,9 +47,10 @@ _LANGUAGE_TYPES = {"zh": 3, "ar": 7}
 # The hub answers with this in ``code`` on success, inside an HTTP 200.
 _OK = 200
 
-# ``sort`` in the search body: 1 by upload date, 2 by likes. The web client
-# also sends 3 for its third menu entry; it is not exposed here.
-SORTS = {"date": 1, "likes": 2}
+# ``sort`` in the search body: 1 by upload date, 2 by likes, 3 by downloads —
+# the web client's "Sort by Date", "Sort by Likes" and "Sort by Downloads"
+# (index-BVUEadnx.js). The download counts themselves are never returned.
+SORTS = {"date": 1, "likes": 2, "downloads": 3}
 # ``recipeType``: what is being brewed.
 KINDS = {"coffee": 1, "tea": 2}
 # ``recipeUserType``: who shared it.
@@ -96,11 +97,19 @@ class XBloomCommunityClient:
             "Content-Type": "application/json;charset=utf-8",
             "LanguageType": str(_language_type(language)),
         }
+        self._language_type = _language_type(language)
         self._criteria: dict[str, list[dict[str, str]]] | None = None
+        # English names, fetched only when the client speaks another language.
+        self._criteria_en: dict[str, list[dict[str, str]]] | None = None
 
-    async def _post(self, endpoint: str, body: dict[str, Any]) -> Any:
+    async def _post(
+        self, endpoint: str, body: dict[str, Any], *, language_type: int | None = None,
+    ) -> Any:
+        headers = self._headers
+        if language_type is not None:
+            headers = {**headers, "LanguageType": str(language_type)}
         async with self._session.post(
-            f"{API_BASE}/{endpoint}", json=body, headers=self._headers,
+            f"{API_BASE}/{endpoint}", json=body, headers=headers,
         ) as resp:
             resp.raise_for_status()
             data = await resp.json(content_type=None)
@@ -111,6 +120,18 @@ class XBloomCommunityClient:
         return data.get("data")
 
     # -- vocabulary ---------------------------------------------------------- #
+    async def _fetch_criteria(self, language_type: int) -> dict[str, list[dict[str, str]]]:
+        raw = await self._post("communityRecipe/recipe/criteria", {}, language_type=language_type)
+        if not isinstance(raw, dict):
+            raise XBloomAPIError("community hub criteria missing")
+        return {
+            key: [
+                {"name": str(item.get("name", "")), "value": str(item.get("value", ""))}
+                for item in items if isinstance(item, dict)
+            ]
+            for key, items in raw.items() if isinstance(items, list)
+        }
+
     async def criteria(self) -> dict[str, list[dict[str, str]]]:
         """The hub's filter vocabulary, ``{list_name: [{name, value}, ...]}``.
 
@@ -118,22 +139,23 @@ class XBloomCommunityClient:
         the values are the same in every language.
         """
         if self._criteria is None:
-            raw = await self._post("communityRecipe/recipe/criteria", {})
-            if not isinstance(raw, dict):
-                raise XBloomAPIError("community hub criteria missing")
-            self._criteria = {
-                key: [
-                    {"name": str(item.get("name", "")), "value": str(item.get("value", ""))}
-                    for item in items if isinstance(item, dict)
-                ]
-                for key, items in raw.items() if isinstance(items, list)
-            }
+            self._criteria = await self._fetch_criteria(self._language_type)
         return self._criteria
 
     async def _resolve(self, list_name: str, names: Iterable[str]) -> list[str]:
-        """Names → the hub's values, case-insensitively. Unknown names raise."""
+        """Names → the hub's values, case-insensitively. Unknown names raise.
+
+        A name is accepted in the client's language or in English, since what
+        a caller holds — a bag's country, an agent's words — is often English
+        whatever language the hub is spoken to in.
+        """
         options = (await self.criteria()).get(list_name, [])
         by_name = {o["name"].casefold(): o["value"] for o in options}
+        if self._language_type != 0:
+            if self._criteria_en is None:
+                self._criteria_en = await self._fetch_criteria(0)
+            for o in self._criteria_en.get(list_name, []):
+                by_name.setdefault(o["name"].casefold(), o["value"])
         values, unknown = [], []
         for name in names:
             value = by_name.get(str(name).strip().casefold())
