@@ -8,8 +8,8 @@
   coffee or tea, official or community, origin, varietal, process, roast,
   flavor and cup type, each named as `criteria()` lists them or in English,
   and sorts by date, likes or downloads; `detail()` adds the description and
-  pours. Each recipe's
-  `share_url` opens the complete recipe through `XBloomClient`.
+  pours. `language="zh"` or `"ar"` has the hub answer in Chinese or Arabic.
+  Each recipe's `share_url` opens the complete recipe through `XBloomClient`.
 
 ## 0.4.0 — 2026-10-02
 
