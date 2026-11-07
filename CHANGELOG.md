@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Community recipe hub.** `XBloomCommunityClient` searches and reads the
+  recipes shared on xBloom's community hub, the library behind the app's
+  community section, with no account. `search()` filters by keyword, machine,
+  coffee or tea, official or community, origin, varietal, process, roast,
+  flavor and cup type, each named as `criteria()` lists them, and sorts by
+  date or likes; `detail()` adds the description and pours. Each recipe's
+  `share_url` opens the complete recipe through `XBloomClient`.
+
 ## 0.4.0 — 2026-10-02
 
 A recipe can be sent ahead over a held connection and started separately, and

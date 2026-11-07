@@ -39,6 +39,7 @@ package drops into an environment that already pins these without fighting it.
 | `mode_listener` | `[ble]` at runtime | Live knob and scale event stream. |
 | `client` | `[cloud]` | Share-link recipe fetching. |
 | `cloud` | `[cloud]` | Account login, recipe CRUD, firmware version check. |
+| `community` | `[cloud]` at runtime | Search and read the community recipe hub, without signing in. |
 
 `ble`, `ota` and `mode_listener` import their Bluetooth dependencies lazily, so
 they can be imported for packet construction with no extras installed.

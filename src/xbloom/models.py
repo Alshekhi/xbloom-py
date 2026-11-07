@@ -51,6 +51,55 @@ class _RecipeRequired(TypedDict):
     share_url: str        # shareRecipeLink
 
 
+class CommunityPour(TypedDict):
+    """One pour as the community hub lists it — no flow rate, no agitation."""
+    name: str             # theName: "Bloom", "Pour1", ...
+    volume_ml: float      # volume
+    temperature_c: float  # temperature
+    pattern: int          # api id: 1=centered, 2=spiral, 3=circular
+    pause_s: int          # pausing
+
+
+class CommunityRecipe(TypedDict):
+    """A recipe as the community hub's search lists it."""
+    id: int               # communityRecipeId — what detail() takes
+    name: str             # recipeName
+    author: str           # userName
+    official: bool        # official == 1: shared by xBloom itself
+    machine: str          # model: "Studio", "Original"
+    cup_type: int         # cupTypeInt, as in spec.CUP_TYPES
+    coffee_type: str      # type: "Single Origin", "Blend", "" for tea
+    origin: list          # list[str]
+    varietal: list        # list[str]
+    process: list         # list[str]
+    flavor: list          # list[str], the author's tasting notes
+    roast: str | None     # roast resolved to its name; None when not given
+    dose_g: float | None
+    water_ratio: float | None  # grandWater: the ratio denominator (1:N)
+    grinder_size: float | None
+    rpm: int
+    pour_count: int
+    cup_volume: str       # volume, free text: "225", "~600"
+    likes: int            # likesCount
+    image_url: str
+    share_url: str        # shareRecipeLink — resolves to the full Recipe
+
+
+class CommunityRecipeDetail(CommunityRecipe):
+    """A hub recipe with its description and pours."""
+    description: str      # introduce
+    uploaded_on: str      # uploadDate, YYYY-MM-DD
+    pours: list           # list[CommunityPour]
+
+
+class CommunityPage(TypedDict):
+    """One page of a hub search."""
+    page: int
+    total_pages: int
+    total: int
+    recipes: list         # list[CommunityRecipe]
+
+
 class Recipe(_RecipeRequired, total=False):
     """Full recipe record. Optional fields absent when not applicable."""
     bypass_temp_c: float      # bypassTemp — absent when bypass_water_enabled == 2
