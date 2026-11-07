@@ -34,6 +34,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/xbloom"]
 
+# The source archive is built from this list, nothing else: a file published
+# to PyPI can never be replaced, so tests, CI and tooling stay in the repo.
+# Hatchling adds .gitignore and PKG-INFO to it whatever the list says; the
+# .gitignore is the one already public in the repository.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/xbloom", "README.md", "LICENSE", "CHANGELOG.md"]
+
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
