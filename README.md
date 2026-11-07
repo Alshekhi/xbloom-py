@@ -1,8 +1,8 @@
 # xbloom-py
 
 Async Python library for [xBloom Studio](https://xbloom.com) coffee brewers:
-the BLE protocol, recipe validation, over-the-air firmware updates, and the
-optional cloud account API.
+the BLE protocol, recipe validation, over-the-air firmware updates, the
+optional cloud account API, and the community recipe hub.
 
 Unofficial, and not affiliated with or endorsed by xBloom. See
 [Disclaimer](#disclaimer).
@@ -12,7 +12,7 @@ Unofficial, and not affiliated with or endorsed by xBloom. See
 ```bash
 pip install xbloom-py            # pure-python core: spec, recipes, validation
 pip install "xbloom-py[ble]"     # + local Bluetooth control
-pip install "xbloom-py[cloud]"   # + cloud account, recipe sync, firmware check
+pip install "xbloom-py[cloud]"   # + cloud account, recipe sync, firmware check, community hub
 pip install "xbloom-py[all]"     # everything
 ```
 
