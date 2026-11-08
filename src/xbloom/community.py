@@ -192,10 +192,10 @@ class XBloomCommunityClient:
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> CommunityPage:
-        """One page of hub recipes, newest (or most liked) first.
+        """One page of hub recipes, newest, most liked or most downloaded first.
 
         Every filter takes the names :meth:`criteria` lists — ``machine="Studio"``,
-        ``origins=["Ethiopia"]`` — in the client's language. ``kind`` is one of
+        ``origins=["Ethiopia"]`` — in the client's language or in English. ``kind`` is one of
         :data:`KINDS`, ``source`` one of :data:`SOURCES`, ``sort`` one of
         :data:`SORTS`.
         """
