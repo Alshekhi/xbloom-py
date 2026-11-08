@@ -349,3 +349,60 @@ def test_another_failure_is_not_read_as_an_expired_session():
             "get recipe",
         )
     assert not isinstance(err.value, cloud.XBloomAuthError)
+
+
+# --------------------------------------------------------------------------- #
+# The app's Recipes tab: Trending, For You, Tea                               #
+# --------------------------------------------------------------------------- #
+def _recording(client, responses):
+    sent = []
+
+    async def post(endpoint, payload):
+        sent.append((endpoint, payload))
+        return responses[endpoint]
+
+    client._post_plain = post  # type: ignore[method-assign]
+    client._post_encrypted = post  # type: ignore[method-assign]
+    return sent
+
+
+def test_trending_is_anyones_without_an_account_and_the_accounts_with_one():
+    from xbloom.cloud import XBloomCloudClient
+
+    client = XBloomCloudClient(session=None)
+    sent = _recording(client, {"tHostRecipe.thtml": {
+        "result": "success", "list": [_raw_recipe(1, "Test Pod"), {"broken": True}],
+    }})
+    assert [r["name"] for r in asyncio.run(client.trending())] == ["Test Pod"]
+    asyncio.run(client.trending(18812, "tok"))
+    assert "memberId" not in sent[0][1]
+    assert (sent[1][1]["memberId"], sent[1][1]["token"]) == (18812, "tok")
+
+
+def test_for_you_is_one_recipe_or_none():
+    from xbloom.cloud import XBloomCloudClient
+
+    client = XBloomCloudClient(session=None)
+    _recording(client, {"tForYouRecipe.thtml": {"result": "success", "recipeVo": _raw_recipe(7, "Test Pick")}})
+    assert asyncio.run(client.for_you())["name"] == "Test Pick"
+    _recording(client, {"tForYouRecipe.thtml": {"result": "success"}})
+    assert asyncio.run(client.for_you()) is None
+
+
+def test_tea_recipes_need_the_account_and_go_encrypted():
+    from xbloom.cloud import XBloomCloudClient
+
+    client = XBloomCloudClient(session=None)
+    sent = _recording(client, {"tuTeaRecipe.tuhtml": {"result": "success", "list": [_raw_recipe(3, "Test Tea")]}})
+    assert [r["name"] for r in asyncio.run(client.tea_recipes(18812, "tok"))] == ["Test Tea"]
+    assert sent[0][1]["memberId"] == 18812
+
+
+def test_a_garbled_no_break_space_in_a_name_is_mended():
+    from xbloom.cloud import XBloomCloudClient
+
+    client = XBloomCloudClient(session=None)
+    _recording(client, {"tHostRecipe.thtml": {"result": "success", "list": [
+        _raw_recipe(1, "Test Knight Â - Roaster"), _raw_recipe(2, "Test Âge"),
+    ]}})
+    assert [r["name"] for r in asyncio.run(client.trending())] == ["Test Knight - Roaster", "Test Âge"]

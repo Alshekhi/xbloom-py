@@ -254,6 +254,14 @@ def _find_code(resp: dict) -> int | None:
     return None
 
 
+def _repair_name(name: str) -> str:
+    """A name with the server's garbled no-break space ("Black Knight Â - Adham") mended.
+
+    Its no-break space arrives as UTF-8 read as Latin-1: "Â" then the space.
+    """
+    return " ".join(name.replace("\u00c2\u00a0", " ").replace("\u00c2 ", " ").split())
+
+
 def _raise_for_result(resp: dict, action: str) -> None:
     """Raise if the response envelope isn't a success.
 
@@ -413,6 +421,63 @@ class XBloomCloudClient:
         _raise_for_result(resp, "delete recipe")
 
     # -- firmware ----------------------------------------------------------- #
+    # -- the app's Recipes tab --------------------------------------------- #
+    # Trending, For You and Tea, as the app shows them. Trending and For You
+    # answer anyone; signed in they follow the account — its country's
+    # roasters and pods — and the language does not change them. Tea needs
+    # the account.
+    def _parsed(self, raws: Any) -> list[Recipe]:
+        out: list[Recipe] = []
+        for raw in raws or []:
+            try:
+                recipe = _parse_recipe(raw)
+            except (KeyError, TypeError, ValueError) as err:
+                log.warning("skipping unparseable recipe %s: %s",
+                            raw.get("tableId") if isinstance(raw, dict) else raw, err)
+                continue
+            recipe["name"] = _repair_name(recipe["name"])
+            out.append(recipe)
+        return out
+
+    def _maybe_auth(self, member_id: int | None, token: str | None, **extra: Any) -> dict:
+        if member_id is not None and token:
+            return self._auth_body(member_id, token, **extra)
+        return {**self._envelope(), **extra}
+
+    async def trending(self, member_id: int | None = None, token: str | None = None) -> list[Recipe]:
+        """The app's Trending Recipes: the account's when signed in, else everyone's."""
+        try:
+            resp = await self._post_plain(
+                "tHostRecipe.thtml",
+                self._maybe_auth(member_id, token, pageNumber=1, countPerPage=50),
+            )
+        except aiohttp.ClientError as err:
+            raise XBloomAPIError(f"trending transport error: {err}") from err
+        _raise_for_result(resp, "list trending recipes")
+        return self._parsed(resp.get("list"))
+
+    async def for_you(self, member_id: int | None = None, token: str | None = None) -> Recipe | None:
+        """The app's For You: one recipe, a different one each time it is asked."""
+        try:
+            resp = await self._post_plain("tForYouRecipe.thtml", self._maybe_auth(member_id, token))
+        except aiohttp.ClientError as err:
+            raise XBloomAPIError(f"for-you transport error: {err}") from err
+        _raise_for_result(resp, "suggest a recipe")
+        found = self._parsed([resp.get("recipeVo")] if resp.get("recipeVo") else [])
+        return found[0] if found else None
+
+    async def tea_recipes(self, member_id: int, token: str) -> list[Recipe]:
+        """The app's Tea Recipes, for a signed-in account."""
+        try:
+            resp = await self._post_encrypted(
+                "tuTeaRecipe.tuhtml",
+                self._auth_body(member_id, token, pageNumber=1, countPerPage=50),
+            )
+        except aiohttp.ClientError as err:
+            raise XBloomAPIError(f"tea recipes transport error: {err}") from err
+        _raise_for_result(resp, "list tea recipes")
+        return self._parsed(resp.get("list"))
+
     async def firmware_check(self, serial_number: str) -> dict | None:
         """Return the latest firmware metadata for a machine serial, or None.
 
@@ -523,6 +588,15 @@ class XBloomCloudSession:
 
     async def list_recipes(self) -> list[Recipe]:
         return await self._call(self._client.list_recipes)
+
+    async def trending(self) -> list[Recipe]:
+        return await self._call(self._client.trending)
+
+    async def for_you(self) -> Recipe | None:
+        return await self._call(self._client.for_you)
+
+    async def tea_recipes(self) -> list[Recipe]:
+        return await self._call(self._client.tea_recipes)
 
     async def create_recipe(self, recipe: dict) -> str:
         return await self._call(
