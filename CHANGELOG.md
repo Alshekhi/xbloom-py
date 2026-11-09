@@ -1,23 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-09
+
+The community recipe hub, and the xBloom app's Trending, For You and Tea
+recipes, can be read.
 
 - **Community recipe hub.** `XBloomCommunityClient` searches and reads the
-  recipes shared on xBloom's community hub, the library behind the app's
-  community section, with no account. `search()` filters by keyword, machine,
-  coffee or tea, official or community, origin, varietal, process, roast,
-  flavor and cup type, each named as `criteria()` lists them or in English,
-  and sorts by date, likes or downloads; `detail()` adds the description and
-  pours. `language="zh"` or `"ar"` has the hub answer in Chinese or Arabic.
-  Each recipe's `share_url` opens the complete recipe through `XBloomClient`.
+  recipes shared on xBloom's community hub, with no account. `search()`
+  filters by keyword, machine, coffee or tea, official or community, origin,
+  varietal, process, roast, flavor and cup type, each named as `criteria()`
+  lists them or in English, and sorts by date, likes or downloads; `detail()`
+  adds the description and pours. `language="zh"` or `"ar"` has the hub
+  answer in Chinese or Arabic. Each recipe's `share_url` opens the complete
+  recipe through `XBloomClient`.
 - **The app's Recipes tab:** `XBloomCloudClient.trending()`, `for_you()` and
   `tea_recipes()` (and the same on `XBloomCloudSession`) read Trending, For
   You and Tea as the xBloom app shows them. Trending and For You need no
   account; signed in they follow the account. A name's garbled no-break
   space ("Â ") is mended.
 - **The source archive carries the package only:** `src/xbloom`, the README,
-  LICENSE and CHANGELOG. Tests, CI workflows and the lockfile stay in the
-  repository.
+  LICENSE and CHANGELOG.
 
 ## 0.4.0 — 2026-10-02
 
