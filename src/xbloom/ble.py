@@ -694,6 +694,11 @@ NOTIFY_WATER_VOLUME     = 40523
 NOTIFY_BLOOM            = 40510
 NOTIFY_ENJOY            = 40512
 NOTIFY_MACHINE_INFO     = 40521  # RD_MachineInfo — periodic status heartbeat
+# RD_ErrorLackOfWater: the low-water switch changed. Sent on every change, in
+# both directions, and once on connect; payload byte 0 is the switch (1 water,
+# 0 low), the same reading as the heartbeat's waterEnough. Seen live
+# 2026-11-13 on V12.0D.500.
+NOTIFY_LACK_OF_WATER    = 40522
 
 # A recipe brew paused and resumed. Seen live 2026-09-28 on V12.0D.500: the
 # echo of CMD_BREW_PAUSE (40518) was followed by 40515, and the echo of
@@ -1015,6 +1020,8 @@ def decode_notification(data: bytes) -> dict | None:
     Output schema: ``{"cmd": int, ...}`` plus optional, cmd-specific fields:
       * weight_g  (float)  — for weight/scale notifications
       * water_ml  (float)  — for water-volume notifications
+      * water_enough (int) — the low-water switch, 1 water / 0 low, from
+                             RD_ErrorLackOfWater and RD_MachineInfo
       * activity  (int)    — for machine-activity (cmd 8023)
       * pour_index (int)   — for RD_BLOOM
       * fw_version (str)   — installed firmware, from RD_MachineInfo
@@ -1034,6 +1041,8 @@ def decode_notification(data: bytes) -> dict | None:
         out["water_ml"] = round(struct.unpack_from("<f", payload, 0)[0], 1)
     elif cmd == NOTIFY_MACHINE_ACTIVITY and len(payload) >= 4:
         out["activity"] = struct.unpack_from("<I", payload, 0)[0]
+    elif cmd == NOTIFY_LACK_OF_WATER and len(payload) >= 1:
+        out["water_enough"] = payload[0]
     elif cmd == NOTIFY_BLOOM and len(payload) >= 4:
         out["pour_index"] = struct.unpack_from("<I", payload, 0)[0]
     # 08-05 — knob change notifications. All four are LE uint32.
