@@ -268,6 +268,11 @@ VOLUME_TOLERANCE_ML = 0.5
 #   * WeightUnitType: ml=0, g=1, oz=2.
 #   * temperature (NumberExtendsKt.temperatureUnit): 0 = °F, 1 = °C (default 1).
 WATER_SOURCE_CODES: dict[str, int] = {"tank": 0, "tap": 1}
+
+# Water left in the tank when its low-water switch trips. The firmware
+# (V12.0D.500) sets a 270 ml reserve at the trip and pauses a brew once it is
+# spent; measured, the switch tripped with about 287 and 320 ml left.
+WATER_RESERVE_ML = 270
 WEIGHT_UNIT_CODES: dict[str, int] = {"g": 1, "ml": 0, "oz": 2}
 # Keys match what the select entity offers and the BLE frame expects ("C"/"F").
 # Lowercase on purpose: these keys are meant to be usable directly as a host's

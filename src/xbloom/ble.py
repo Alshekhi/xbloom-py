@@ -1019,7 +1019,7 @@ def decode_notification(data: bytes) -> dict | None:
 
     Output schema: ``{"cmd": int, ...}`` plus optional, cmd-specific fields:
       * weight_g  (float)  — for weight/scale notifications
-      * water_ml  (float)  — for water-volume notifications
+      * water_ml  (float)  — water the brew has poured so far, in ml
       * water_enough (int) — the low-water switch, 1 water / 0 low, from
                              RD_ErrorLackOfWater and RD_MachineInfo
       * activity  (int)    — for machine-activity (cmd 8023)
@@ -1038,7 +1038,9 @@ def decode_notification(data: bytes) -> dict | None:
     if cmd in (NOTIFY_WEIGHT_2, NOTIFY_WEIGHT_ALT) and len(payload) >= 4:
         out["weight_g"] = round(struct.unpack_from("<f", payload, 0)[0], 2)
     elif cmd == NOTIFY_WATER_VOLUME and len(payload) >= 4:
-        out["water_ml"] = round(struct.unpack_from("<f", payload, 0)[0], 1)
+        # The whole brew's poured water, sent as millilitres x 1000: a 500 ml
+        # recipe ends at 500000.0 (seen live 2026-11-13 on V12.0D.500).
+        out["water_ml"] = round(struct.unpack_from("<f", payload, 0)[0] / 1000, 1)
     elif cmd == NOTIFY_MACHINE_ACTIVITY and len(payload) >= 4:
         out["activity"] = struct.unpack_from("<I", payload, 0)[0]
     elif cmd == NOTIFY_LACK_OF_WATER and len(payload) >= 1:
