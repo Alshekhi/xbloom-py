@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0 — 2026-11-19
+
+The low-water switch and the water a brew has poured can be read, and the
+heartbeat reports its units with the spec's own codes.
+
+- **The low-water switch.** `RD_ErrorLackOfWater` (40522) now decodes to
+  `water_enough`: `1` while the tank reads water, `0` once the switch trips.
+  The machine sends the same frame both ways, so the value is what says which;
+  before, only the frame was reported.
+- **Water poured, in millilitres.** `RD_WATER_VOLUME` (40523) decodes to
+  `water_ml`, the water the brew in progress has poured; the raw value is
+  millilitres × 1000. **The decoded number changes:** it was 1000 times too
+  large before.
+- **The water reserve.** `spec.WATER_RESERVE_ML` (270) is the water the
+  firmware counts on having left when the switch trips; it refuses a recipe
+  that needs more while the switch already reads low.
+- **Temperature unit codes.** The heartbeat's `temp_unit` is now `"c"` or
+  `"f"`, the keys of `spec.TEMP_UNIT_CODES`, as `weight_unit` already was.
+  **It was `"C"` or `"F"`.**
+
 ## 0.5.0 — 2026-11-09
 
 The community recipe hub, and the xBloom app's Trending, For You and Tea
