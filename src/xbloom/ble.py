@@ -1104,7 +1104,8 @@ def decode_notification(data: bytes) -> dict | None:
             out["voltage"] = payload[39]
         if len(payload) >= 42:
             # CONFIRMED wire codes (app): tempUnit 0=°F / 1=°C; weight ml=0/g=1/oz=2.
-            out["temp_unit"] = "C" if payload[40] else "F"
+            # The spec's own codes (TEMP_UNIT_CODES), as weight_unit uses.
+            out["temp_unit"] = "c" if payload[40] else "f"
             out["weight_unit"] = {0: "ml", 1: "g", 2: "oz"}.get(payload[41])
         if len(payload) >= 43:
             out["ui_state"] = payload[42]  # experimental — validate live

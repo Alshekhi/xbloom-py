@@ -124,7 +124,7 @@ def test_full_heartbeat_app_confirmed_field_map():
         grind_raw=85, voltage=220, area_ap=95.5, ui_state=1, mode_easy=True,
     )))
     assert out["water_source"] == "tap"        # byte 36 = 1
-    assert out["temp_unit"] == "F"             # byte 40 = 0 (0=°F, app-confirmed)
+    assert out["temp_unit"] == "f"             # byte 40 = 0 (0=°F, app-confirmed); spec.TEMP_UNIT_CODES key
     assert out["weight_unit"] == "ml"          # byte 41 = 0 (0=ml, app-confirmed)
     assert out["grind_size_current"] == 55     # 85 - 30
     assert out["voltage"] == 220
@@ -139,7 +139,7 @@ def test_heartbeat_mode_pro_and_tank():
     )))
     assert out["mode"] == "pro"                # bytes 51-54 == 00000000
     assert out["water_source"] == "tank"       # byte 36 = 0
-    assert out["temp_unit"] == "C"             # byte 40 = 1 (1=°C, app-confirmed)
+    assert out["temp_unit"] == "c"             # byte 40 = 1 (1=°C, app-confirmed); spec.TEMP_UNIT_CODES key
     assert out["weight_unit"] == "oz"          # byte 41 = 2 (2=oz, app-confirmed)
 
 
@@ -170,3 +170,13 @@ def test_encode_recipe_blob_trailing_byte_is_ratio_x10():
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_units_decode_to_the_spec_codes_consumers_match_against():
+    from xbloom import spec
+
+    for byte in (0, 1):
+        out = ble.decode_notification(_frame(_machine_info_payload(
+            length=63, temp_unit=byte, weight_unit=byte)))
+        assert out["temp_unit"] in spec.TEMP_UNIT_CODES
+        assert out["weight_unit"] in spec.WEIGHT_UNIT_CODES
